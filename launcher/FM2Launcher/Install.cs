@@ -246,7 +246,11 @@ public static class Dlc
 {
     public sealed record Pack(string Id, string Name, bool Enabled, long Bytes);
 
-    public static List<Pack> List()
+    // Mods (backported cars in the same package format) live beside the DLC, marked by a .mod file, listed apart.
+    public static List<Pack> List() => ListAll(mods: false);
+    public static List<Pack> Mods() => ListAll(mods: true);
+
+    static List<Pack> ListAll(bool mods)
     {
         var packs = new List<Pack>();
         foreach (var (dir, enabled) in new[] { (Paths.Dlc, true), (Paths.DlcDisabled, false) })
@@ -254,7 +258,8 @@ public static class Dlc
             if (!Directory.Exists(dir)) continue;
             foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos())
             {
-                if (entry.Extension is ".title" or ".license") continue;
+                if (entry.Extension is ".title" or ".license" or ".mod") continue;
+                if (File.Exists(Path.Combine(dir, entry.Name + ".mod")) != mods) continue;
                 var titleFile = Path.Combine(dir, entry.Name + ".title");
                 var name = File.Exists(titleFile) ? Encoding.Unicode.GetString(File.ReadAllBytes(titleFile)).TrimEnd('\0').Trim() : entry.Name;
                 long bytes = entry is FileInfo fi ? fi.Length
@@ -271,7 +276,7 @@ public static class Dlc
         if (Game.Running) throw new InvalidOperationException("Close the game first: DLC is read while it runs.");
         var (from, to) = enabled ? (Paths.DlcDisabled, Paths.Dlc) : (Paths.Dlc, Paths.DlcDisabled);
         Directory.CreateDirectory(to);
-        foreach (var name in new[] { id, id + ".title", id + ".license" })
+        foreach (var name in new[] { id, id + ".title", id + ".license", id + ".mod" })
         {
             var src = Path.Combine(from, name);
             var dst = Path.Combine(to, name);
@@ -280,16 +285,37 @@ public static class Dlc
         }
     }
 
-    /// <summary>Copies package files (as downloaded from Xbox Live) into the DLC folder; the game unpacks them.</summary>
-    public static int Add(IEnumerable<string> files)
+    /// <summary>Installs packages (as downloaded from Xbox Live, or backported mods): unpacked into the DLC folder the
+    /// way the game reads them. Before, the package file was only copied there and the game never saw it.</summary>
+    public static (int Added, List<string> Errors) Add(IEnumerable<string> files, bool mods)
     {
+        if (Game.Running) throw new InvalidOperationException("Close the game first: DLC is read while it runs.");
         Directory.CreateDirectory(Paths.Dlc);
         int added = 0;
+        var errors = new List<string>();
         foreach (var f in files.Where(File.Exists))
         {
-            File.Copy(f, Path.Combine(Paths.Dlc, Path.GetFileName(f)), true);
-            added++;
+            try
+            {
+                Stfs.Install(f, Paths.Dlc, mods);
+                added++;
+            }
+            catch (Exception ex) { errors.Add($"{Path.GetFileName(f)}: {ex.Message}"); }
         }
-        return added;
+        return (added, errors);
+    }
+
+    /// <summary>Deletes an installed pack and its files (the Mods panel's Remove).</summary>
+    public static void Remove(string id)
+    {
+        if (id.Contains('/') || id.Contains('\\') || id.Contains("..")) throw new ArgumentException("Not a package name.");
+        if (Game.Running) throw new InvalidOperationException("Close the game first: DLC is read while it runs.");
+        foreach (var dir in new[] { Paths.Dlc, Paths.DlcDisabled })
+            foreach (var name in new[] { id, id + ".title", id + ".license", id + ".mod" })
+            {
+                var p = Path.Combine(dir, name);
+                if (Directory.Exists(p)) Directory.Delete(p, true);
+                else if (File.Exists(p)) File.Delete(p);
+            }
     }
 }
