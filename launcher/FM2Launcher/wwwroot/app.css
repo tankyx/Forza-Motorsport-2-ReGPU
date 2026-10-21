@@ -188,3 +188,7 @@ select:focus, input:focus { border-color: var(--accent); }
 #page-profiles .list { flex: 0 1 auto; }
 #page-profiles .panel > .list:first-of-type { flex: 1; }
 .dialog input, .dialog select { width: 100%; margin-top: 4px; }
+
+/* mods */
+.grid-mods { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.item .ghost.small { flex: none; }

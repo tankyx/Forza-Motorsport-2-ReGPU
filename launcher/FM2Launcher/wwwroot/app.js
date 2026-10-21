@@ -127,7 +127,7 @@ $("tabs").onclick = (e) => {
   const b = e.target.closest("button")
   if (!b) return
   for (const t of $("tabs").children) t.classList.toggle("on", t === b)
-  for (const p of ["play", "profiles", "photos", "settings", "updates"]) $("page-" + p).hidden = p !== b.dataset.tab
+  for (const p of ["play", "profiles", "photos", "mods", "settings", "updates"]) $("page-" + p).hidden = p !== b.dataset.tab
   if (b.dataset.tab === "photos") loadPhotos()
   else if (b.dataset.tab === "profiles") loadProfiles()
   else if (b.dataset.tab !== "play") refresh()
@@ -215,6 +215,30 @@ function render() {
     dl.append(it)
   }
   $("dlc-add").disabled = s.checks.running
+
+  // mods page
+  const ml = $("mods")
+  ml.replaceChildren()
+  if (!s.mods.length) ml.append(el("div", "empty", "No mods installed. Add mods to bring in cars from other games."))
+  for (const p of s.mods) {
+    const it = el("div", "item" + (p.enabled ? "" : " off"))
+    const main = el("div", "main")
+    main.append(el("div", "title", p.name), el("div", "meta", size(p.bytes)))
+    const rm = el("button", "ghost small danger", "Remove")
+    rm.dataset.tip = "Deletes this mod from the game."
+    rm.disabled = s.checks.running
+    rm.onclick = () => guarded(async () => {
+      if (!await confirmBox(`Remove ${p.name}?`, "The mod's files are deleted. Cars of it in your garage may disappear from it.", "Remove")) return
+      state = await call("mods.remove", p.id); render()
+    })
+    const sw = el("button", "switch" + (p.enabled ? " on" : ""))
+    sw.dataset.tip = p.enabled ? "On: the game loads this mod. Click to switch it off." : "Off: kept, not loaded. Click to switch it on."
+    sw.disabled = s.checks.running
+    sw.onclick = () => guarded(async () => { state = await call("mods.toggle", { id: p.id, enabled: !p.enabled }); render() })
+    it.append(main, rm, sw)
+    ml.append(it)
+  }
+  $("mods-add").disabled = s.checks.running
 
   const f = $("folders")
   f.replaceChildren()
@@ -318,12 +342,15 @@ $("shaders-rebuild").onclick = () => guarded(async () => {
   render()
   toast("Game started: compiling shaders.", true)
 })
-$("dlc-add").onclick = () => guarded(async () => {
-  const r = await call("dlc.add")
+async function addPackages(cmd, what) {
+  const r = await call(cmd)
   state = r.state
   render()
-  if (r.added) toast(`${r.added} package${r.added > 1 ? "s" : ""} added. The game unpacks them on the next start.`, true)
-})
+  if (r.errors && r.errors.length) toast(r.errors.join(" "))
+  else if (r.added) toast(`${r.added} ${what}${r.added > 1 ? "s" : ""} installed. ${r.added > 1 ? "They appear" : "It appears"} in the game next time it starts.`, true)
+}
+$("dlc-add").onclick = () => guarded(() => addPackages("dlc.add", "package"))
+$("mods-add").onclick = () => guarded(() => addPackages("mods.add", "mod"))
 for (const b of document.querySelectorAll("[data-open]")) b.onclick = () => guarded(() => call("open", b.dataset.open))
 
 async function checkUpdates(quiet) {

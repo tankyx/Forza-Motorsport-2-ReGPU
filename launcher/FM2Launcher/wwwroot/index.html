@@ -18,6 +18,7 @@
       <button data-tab="play" class="on">Play</button>
       <button data-tab="profiles">Profiles</button>
       <button data-tab="photos">Photos</button>
+      <button data-tab="mods">Mods</button>
       <button data-tab="settings">Settings</button>
       <button data-tab="updates">Updates <span class="dot-badge" id="update-badge" hidden></span></button>
     </nav>
@@ -171,6 +172,30 @@
     </section>
   </main>
 
+  <!-- MODS -->
+  <main class="page grid-mods" id="page-mods" hidden>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Car mods <span class="badge">experimental</span></h2>
+        <button class="primary small" id="mods-add" data-tip="Installs mod packages: cars backported from other Forza games as Forza Motorsport 2 DLC packages. They appear in the game next time it starts.">Add mods</button>
+      </div>
+      <p class="hint">Cars from other games, packaged as Forza Motorsport 2 downloadable content. Switch one off to keep it out of the game without deleting it.</p>
+      <div class="list" id="mods"></div>
+      <div class="status" id="mods-status"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>About mods</h2></div>
+      <div class="notes">
+        <p>A mod here is a package in the same format as the game's DLC (an Xbox 360 "LIVE" package for Forza Motorsport 2), made with a backporting tool.</p>
+        <p>Add the package file itself: the file with a long hexadecimal name, usually inside <code>content\0000000000000000\4D5307EA\00000002\</code>.</p>
+        <p>Mods are community content: they can have rough edges (damage models, shadows, sounds) the official cars don't.</p>
+      </div>
+      <div class="buttons-row">
+        <button class="ghost small" data-open="dlc" data-tip="Opens Documents\fm2\dlc, where DLC and mods are installed.">Open folder</button>
+      </div>
+    </section>
+  </main>
+
   <!-- SETTINGS -->
   <main class="page grid3" id="page-settings" hidden>
     <section class="panel">
@@ -187,7 +212,7 @@
     <section class="panel">
       <div class="panel-head">
         <h2>DLC packs</h2>
-        <button class="primary small" id="dlc-add" data-tip="Copies DLC packages (the files as downloaded from Xbox Live) into the game's DLC folder. The game unpacks them on the next start.">Add DLC</button>
+        <button class="primary small" id="dlc-add" data-tip="Installs DLC packages (the files as downloaded from Xbox Live) into the game's DLC folder. They appear in the game next time it starts.">Add DLC</button>
       </div>
       <p class="hint">Cars and tracks packs. Switch one off to keep it out of the game without deleting it.</p>
       <div class="list" id="dlc"></div>

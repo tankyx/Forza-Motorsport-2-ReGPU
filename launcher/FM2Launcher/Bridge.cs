@@ -58,16 +58,25 @@ public sealed class Bridge(CoreWebView2 web, Form owner)
                 Dlc.SetEnabled(a!["id"]!.GetValue<string>(), a["enabled"]!.GetValue<bool>());
                 return State();
             case "dlc.add":
+            case "mods.add":
                 {
+                    var mods = cmd == "mods.add";
                     using var dialog = new OpenFileDialog
                     {
-                        Title = "Choose DLC packages",
+                        Title = mods ? "Choose mod packages" : "Choose DLC packages",
                         Filter = "Xbox 360 content packages|*.*",
                         Multiselect = true,
                     };
-                    int added = dialog.ShowDialog(owner) == DialogResult.OK ? Dlc.Add(dialog.FileNames) : 0;
-                    return new { added, state = State() };
+                    if (dialog.ShowDialog(owner) != DialogResult.OK) return new { added = 0, errors = Array.Empty<string>(), state = State() };
+                    var (added, errors) = Dlc.Add(dialog.FileNames, mods);
+                    return new { added, errors, state = State() };
                 }
+            case "mods.toggle":
+                Dlc.SetEnabled(a!["id"]!.GetValue<string>(), a["enabled"]!.GetValue<bool>());
+                return State();
+            case "mods.remove":
+                Dlc.Remove(a!.GetValue<string>());
+                return State();
             case "open":
                 {
                     var which = a?.GetValue<string>();
@@ -219,6 +228,7 @@ public sealed class Bridge(CoreWebView2 web, Form owner)
             },
             shaders = ShaderCache.Get(),
             dlc = Dlc.List(),
+            mods = Dlc.Mods(),
         };
     }
 }

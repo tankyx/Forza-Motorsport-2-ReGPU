@@ -18,6 +18,7 @@
 #include "loader.h"
 #include "render/presenter.h"
 #include "settings.h"
+#include "zip.h"
 
 #include <windows.h>
 #include <Xinput.h>
@@ -55,6 +56,52 @@ uint64_t Xuid()
 }
 
 constexpr uint32_t kContentDataSize = 0x134;
+
+// A DLC package's car zips (Media\DLCZips\<name>.zip) carry their database patches (media\db\patch\*.slt,
+// *.sql: the cars' Data_Car rows and so on), and the game lists that directory through a folder of the
+// zip's name (<name>\media\db\patch\), not inside the zip. On the console the package's files are laid out
+// that way; unpacked here from the zip alone the folder was missing, so no DLC car was ever added to the
+// database (official packs and backported "mod" cars alike). The patch files are written there once (again
+// if the zip changes); everything else is still read from the zip.
+void UnpackDlcPatches(const std::filesystem::path& package)
+{
+    std::error_code ec;
+    const std::filesystem::path zips = package / "Media" / "DLCZips";
+    for (const auto& z : std::filesystem::directory_iterator(zips, ec))
+    {
+        if (!z.is_regular_file(ec) || z.path().extension() != ".zip")
+            continue;
+        const std::filesystem::path folder = z.path().parent_path() / z.path().stem();
+        const std::filesystem::path stamp = folder / ".fm2-patches";
+        const std::string want = std::to_string(z.file_size(ec)) + " " + std::to_string(z.last_write_time(ec).time_since_epoch().count());
+        {
+            std::ifstream in(stamp);
+            std::string have;
+            std::getline(in, have);
+            if (have == want)
+                continue;
+        }
+        std::ifstream in(z.path(), std::ios::binary);
+        const std::vector<uint8_t> zip{ std::istreambuf_iterator<char>(in), {} };
+        int written = 0;
+        ForEachZipMember(zip, "media/db/patch/", [&](const std::string& name, const std::vector<uint8_t>& data) {
+            std::string lower = name;
+            for (char& c : lower)
+                c = char(tolower(uint8_t(c)));
+            if (lower.rfind("media/db/patch/", 0) != 0 || lower.back() == '/')
+                return;
+            const std::filesystem::path out = folder / std::filesystem::path(name).make_preferred();
+            std::filesystem::create_directories(out.parent_path(), ec);
+            std::ofstream(out, std::ios::binary).write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+            written++;
+        });
+        if (written)
+        {
+            std::ofstream(stamp) << want << "\n";
+            Log("content: %s: %d database patch file(s) unpacked", z.path().filename().string().c_str(), written);
+        }
+    }
+}
 
 // XCONTENT_DATA: deviceId, contentType, displayName[128] (UTF-16 BE), fileName[42].
 struct ContentItem
@@ -863,6 +910,7 @@ GUEST_EXPORT(XamContentCreateEnumerator)
             const std::string fileName = package.path().filename().string();
             if (!package.is_directory() || fileName.size() > 42)
                 continue;
+            UnpackDlcPatches(package.path());
             ContentItem item{ 2, {}, fileName };
             std::ifstream in(DlcDir() / (fileName + ".title"), std::ios::binary);
             std::string bytes((std::istreambuf_iterator<char>(in)), {});
