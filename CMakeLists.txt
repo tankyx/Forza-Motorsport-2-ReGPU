@@ -102,7 +102,10 @@ add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_dif
     "${FM2_FFX}/signedbin/amd_fidelityfx_loader_dx12.dll" "${FM2_FFX}/signedbin/amd_fidelityfx_upscaler_dx12.dll" $<TARGET_FILE_DIR:fm2>)
 add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${FM2_DLSS}/lib/Windows_x86_64/rel/nvngx_dlss.dll" $<TARGET_FILE_DIR:fm2>)
-target_link_libraries(fm2 PRIVATE fm2_ppc XenonUtils synchronization winmm onecore d3d12 dxgi d3dcompiler)
+# Microsoft's HLSL compiler beside fm2.exe (src/gpu/d3dcompiler.cpp): Wine's own can't compile our shaders.
+set(FM2_D3DCOMPILER "C:/Program Files (x86)/Windows Kits/10/Redist/D3D/x64/d3dcompiler_47.dll" CACHE FILEPATH "Redistributable d3dcompiler_47.dll")
+add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FM2_D3DCOMPILER}" $<TARGET_FILE_DIR:fm2>)
+target_link_libraries(fm2 PRIVATE fm2_ppc XenonUtils synchronization winmm onecore d3d12 dxgi)
 target_compile_definitions(fm2 PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(fm2 PRIVATE -gline-tables-only)
 target_link_options(fm2 PRIVATE /STACK:0x1000000 /DEBUG)
