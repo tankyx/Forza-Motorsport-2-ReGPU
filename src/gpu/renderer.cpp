@@ -320,6 +320,7 @@ struct ResolvedTexture
     // later puts something else there (a CPU-made texture), the resolve is stale (see ResolvedFor).
     uint64_t memHash = 0, memChecked = 0;
     bool stale = false;
+    uint32_t guestBpp = 4; // bytes per pixel of the guest image: the hash covers only its memory
     // The title resolves differently sized images (bloom chain) to one address within a
     // frame: keep earlier sizes here and swap them in rather than recreating them.
     std::vector<ResolvedTexture> spares;
@@ -3109,16 +3110,18 @@ ID3D12Resource* ResolvedMipChain(const TextureFetch& fetch, const ResolvedTextur
 // so a compressed fetch at an address we resolved to earlier is a different image the
 // title has since loaded there (menu thumbnails reusing a shadow blob's memory).
 // A hash of the guest memory a resolved image covers (sampled: it only has to notice new contents).
-uint64_t GuestImageHash(uint32_t base, uint32_t width, uint32_t height)
+// (Only the image's own bytes: an 8-bit car shadow hashed as 32-bit took in the memory after it,
+// which changes when parts are fitted, and the shadow fell back to that memory as noise.)
+uint64_t GuestImageHash(uint32_t base, uint32_t width, uint32_t height, uint32_t bpp)
 {
-    const size_t bytes = std::min<size_t>(size_t(width) * height * 4, 4u << 20);
+    const size_t bytes = std::min<size_t>(size_t(width) * height * bpp, 4u << 20);
     return ContentHash(GuestPtr<uint8_t>(GpuPhysToGuest(base)), std::max<size_t>(bytes, 64), 256);
 }
 
 // Records what guest memory holds under a resolved image (after a resolve, or after we write it back).
 void NoteResolvedMemory(uint32_t base, ResolvedTexture& r)
 {
-    r.memHash = GuestImageHash(base, r.width, r.height);
+    r.memHash = GuestImageHash(base, r.width, r.height, r.guestBpp);
     r.memChecked = g_r.frame;
     r.stale = false;
 }
@@ -3141,7 +3144,7 @@ const ResolvedTexture* ResolvedFor(const TextureFetch& fetch)
         if (!r.stale && g_r.frame - r.memChecked >= 32)
         {
             r.memChecked = g_r.frame;
-            if (GuestImageHash(it->first, r.width, r.height) != r.memHash)
+            if (GuestImageHash(it->first, r.width, r.height, r.guestBpp) != r.memHash)
             {
                 r.stale = true;
                 Log("renderer: resolve at %08X (%ux%u) is stale: the memory was reused", it->first, r.width, r.height);
@@ -4555,6 +4558,12 @@ void Resolve()
         // Bit 24 (copy swap): the destination stores red and blue exchanged; the
         // fetch swizzle swaps them back when the title samples it.
         const bool swapRB = !depth && ((info >> 24) & 1);
+        // Guest bytes per pixel (Xenos colour formats: k_8 2, 16-bit 3-5/10/15/24, 64-bit 26/37, 128-bit 38).
+        g_r.resolved[base].guestBpp = depth ? 4
+            : destFormat == 2 ? 1
+            : (destFormat >= 3 && destFormat <= 5) || destFormat == 10 || destFormat == 15 || destFormat == 24 ? 2
+            : destFormat == 26 || destFormat == 37 ? 8
+            : destFormat == 38 ? 16 : 4;
         BlitResolve(depth, base, width, height, format, rect, depth ? 1.0f : std::ldexp(1.0f, bias));
         // Temporal upscaling: each tile of the main view keeps its depth before it is cleared.
         if (g_temporal && g_scenePhase && !depth && width >= kWidth && rect.left == 0 && rect.right >= LONG(kWidth))
@@ -7220,6 +7229,9 @@ void RendererOnSwapImpl(uint64_t frameNumber, uint32_t frontBuffer)
     }
 
     static uint64_t dumpFrame = getenv("FM2_DUMP_FRAME") ? strtoull(getenv("FM2_DUMP_FRAME"), nullptr, 10) : 0;
+    // A capture asked for some other way (fm2ctl capture: RendererRequestCapture) dumps that frame too.
+    if (const uint64_t hot = g_hotkeyFrame.load(std::memory_order_relaxed); hot > dumpFrame && hot > g_r.frame)
+        dumpFrame = hot;
     {
         // F12 in the game window: capture the next frame (frame.png, the resolves in out\res,
         // and the frame's draws in out/play.log) to report rendering bugs.

@@ -29,10 +29,6 @@
   <main class="page grid3" id="page-play">
     <section class="panel">
       <div class="panel-head"><h2>Display</h2></div>
-      <label class="field" data-tip="Your save slot. Each name keeps its own saves, career and garage. Up to 15 characters.">
-        <span>Profile name</span>
-        <input id="profile" maxlength="15" spellcheck="false">
-      </label>
       <label class="field" data-tip="The size the game renders at. Your display's own modes from 1280x720 up.">
         <span>Resolution</span>
         <select id="resolution"></select>
@@ -109,7 +105,7 @@
       <div class="panel-head"><h2 id="prof-title">Profile</h2><span class="badge-on" id="prof-active" hidden>Playing</span></div>
       <div class="kv" id="prof-info"></div>
       <div class="buttons-col">
-        <button class="primary" id="prof-use" data-tip="Plays this profile from now on (the same as the profile name on the Play tab).">Play as this profile</button>
+        <button class="primary" id="prof-use" data-tip="Plays this profile from now on.">Play as this profile</button>
         <button class="ghost" id="prof-backup" data-tip="Saves a zip of this profile in Documents\fm2\backups. Restore it below whenever you like.">Back up now</button>
         <button class="ghost" id="prof-duplicate" data-tip="A full copy under a new name: career, garage, liveries and photos. Handy before trying cheats.">Duplicate…</button>
         <button class="ghost" id="prof-rename" data-tip="Renames the profile and its folder. Its saves keep working.">Rename…</button>

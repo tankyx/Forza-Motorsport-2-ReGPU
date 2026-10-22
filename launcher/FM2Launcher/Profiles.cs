@@ -22,7 +22,8 @@ internal static class Profiles
     {
         var active = GameSettings.Load().Profile;
         var list = new List<Info>();
-        if (!Directory.Exists(Root)) return list;
+        // The game plays the active profile (and shows its name) whether or not it has a folder yet, so list it.
+        Directory.CreateDirectory(Path.Combine(Root, FolderName(active)));
         foreach (var dir in new DirectoryInfo(Root).EnumerateDirectories().OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
         {
             var content = Path.Combine(dir.FullName, "content");
@@ -131,6 +132,14 @@ internal static class Profiles
         var dir = Dir(name);
         var backup = MakeBackup(name, "deleted");
         Directory.Delete(dir, true);
+        // Deleting the active profile: play another one, so the game doesn't quietly recreate it empty.
+        var s = GameSettings.Load();
+        if (string.Equals(FolderName(s.Profile), Path.GetFileName(dir), StringComparison.OrdinalIgnoreCase))
+        {
+            s.Profile = new DirectoryInfo(Root).EnumerateDirectories().Select(d => d.Name)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "Player";
+            s.Save();
+        }
         return backup;
     }
 
