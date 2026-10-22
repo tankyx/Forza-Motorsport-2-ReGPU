@@ -55,7 +55,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "Forza Motorsport 2 ReGPU";
-        ClientSize = new Size(1200, 800);
+        ClientSize = new Size(1360, 820);
         MinimumSize = new Size(1000, 700);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(11, 13, 17);

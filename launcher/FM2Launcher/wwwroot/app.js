@@ -158,7 +158,6 @@ function render() {
   chip(s.checks.running ? "warn" : "ok", s.checks.running ? "Game running" : "Not running")
 
   // play page
-  if (document.activeElement !== $("profile")) $("profile").value = set.profile
   fill($("resolution"), o.resolutions.map((r) => ({ value: r, name: r.replace("x", " × ") })), set.resolution)
   fill($("aspect"), o.aspects, set.aspect)
   fill($("maxFps"), o.fps.map((f) => ({ value: f, name: f + " fps" })), set.maxFps)
@@ -302,7 +301,6 @@ function change(patch) {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => guarded(async () => { state = await call("save", state.settings); render() }), 250)
 }
-$("profile").oninput = (e) => { state.settings.profile = e.target.value; clearTimeout(saveTimer); saveTimer = setTimeout(() => change({}), 500) }
 $("resolution").onchange = (e) => change({ resolution: e.target.value })
 $("aspect").onchange = (e) => change({ aspect: e.target.value })
 $("maxFps").onchange = (e) => change({ maxFps: +e.target.value })
