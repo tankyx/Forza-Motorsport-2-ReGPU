@@ -13,6 +13,9 @@ No game data is included: you need your own copy of the disc. See
 [FM2-native-scope.md](FM2-native-scope.md) for the plan and [TESTING.md](TESTING.md)
 for playing it.
 
+For support or to get involved in the development of ReGPU, join our Discord server:
+https://discord.gg/pVEpmSk2G3
+
 ## Install
 
 The installer contains no game files. You need your own copy of the European disc image and the title update.
