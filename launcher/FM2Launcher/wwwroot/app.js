@@ -324,6 +324,7 @@ async function addPackages(cmd, what) {
   else if (r.added) toast(`${r.added} ${what}${r.added > 1 ? "s" : ""} installed. ${r.added > 1 ? "They appear" : "It appears"} in the game next time it starts.`, true)
 }
 $("dlc-add").onclick = () => guarded(() => addPackages("dlc.add", "package"))
+$("discord").onclick = () => guarded(() => call("discord"))
 for (const b of document.querySelectorAll("[data-open]")) b.onclick = () => guarded(() => call("open", b.dataset.open))
 
 async function checkUpdates(quiet) {
