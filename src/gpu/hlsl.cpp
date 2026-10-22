@@ -23,6 +23,9 @@ cbuffer VSConstants : register(b0)
     // Vertex fetch k of this shader (see VFetchK): x fetch constant | format << 8 | signed << 14
     // | normalized << 15 | round << 16, y stride, z offset (dwords), w dest swizzle | exp << 16.
     uint4 vfl[32];
+    // The "whysthisdealer" easter egg (hooks/dealer.cpp): every mesh of a car takes its squash in clip space,
+    // opos += K (opos.xyw - o.xyw): rows 0-3 xyz = K's rows (clip x, y, z, w), rows 0-2 w = o.xyw, row 3 w = on.
+    float4 vsquash[4];
     // xy: clip-space factors for perspective geometry in a wide pass (outputs wider than
     // 16:9; 1 otherwise): x narrows the view to the wider screen (Hor+), y zooms in when
     // FM2_WIDE_FOV limits how far the view widens; z keeps 2D (HUD, menus) at 16:9; w is 0

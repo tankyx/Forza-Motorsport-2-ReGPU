@@ -25,6 +25,7 @@
 #include <map>
 #include <set>
 #include <shared_mutex>
+#include <regex>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -61,7 +62,7 @@ using Microsoft::WRL::ComPtr;
 
 void LogAllHostThreadStacks(const char* why); // hang.cpp
 extern std::atomic<bool> g_cameraAspectWidened; // hooks/camera_aspect.cpp
-void DealerCarDraw(uint64_t vs, const float c[256][4], float point[4]); // hooks/dealer.cpp: the easter egg, per car draw
+void DealerCarDraw(uint64_t vs, const float c[256][4], float squash[4][4], bool body); // hooks/dealer.cpp: the easter egg, per car draw
 
 namespace
 {
@@ -291,7 +292,8 @@ struct CompiledShader
     TranslatedShader info;
     const CompiledShader* hlslSource = nullptr; // canonical variants: the shader whose code (and HLSL) this reuses
     mutable const CompiledShader* motion = nullptr; // its motion-vector variant, once looked up
-    bool carBody = false; // a car-body vertex shader (ApplyDirtSeamFix): takes the easter egg's bounce
+    bool carBody = false; // a car-body vertex shader (ApplyDirtSeamFix): takes the easter egg's squash
+    bool carPart = false; // another car-mesh vertex shader (tyres, brakes): moves with its car in the egg
     bool IsReady() const { return state.load(std::memory_order_acquire) == Ready; }
 };
 
@@ -2043,6 +2045,27 @@ uint64_t PsEditAlias(uint64_t hash)
 // along the bonnet (the AE86 at Tsukuba from lap 2). Seam-safe sampling: those vertex shaders also output
 // frac(u + 0.5) (o[9], with a flag in .y), and pixel shaders that sample at that u take whichever of the
 // two changes less across the pixel. Elsewhere both give the same texel. FM2_NO_SEAM_FIX=1 turns it off.
+// The easter egg's squash, for every mesh of a car (body, tyres, brakes, glass): the clip position is moved
+// by K (opos.xyw - o.xyw), the reference car's axes scaled about its origin (dealer.cpp DealerCarDraw), so
+// all of a car's parts squash together whatever transform each was drawn with. Off (vsquash zero) normally.
+bool AddCarSquash(std::string& hlsl)
+{
+    static const std::string end = "}\nvoid GuestVS(uint vindex, out float4 opos, out float4 o[16])\n";
+    const size_t e = hlsl.find(end);
+    if (e == std::string::npos)
+        return false;
+    hlsl.insert(e, "            if (vsquash[3].w > 0) { float3 q = opos.xyw - float3(vsquash[0].w, vsquash[1].w, vsquash[2].w);\n"
+                   "                opos += float4(dot(vsquash[0].xyz, q), dot(vsquash[1].xyz, q), dot(vsquash[2].xyz, q), dot(vsquash[3].xyz, q)); }\n");
+    return true;
+}
+
+// Other car meshes (tyres, brake discs): their positions are dequantised like the body's (q * w + vc[191]).
+bool MarkCarPart(std::string& hlsl)
+{
+    static const std::regex dequant(R"(\(r\[\d+\]\.\w+\), \(r\[\d+\]\.wwww\)\) \+ \(vc\[191\])");
+    return std::regex_search(hlsl, dequant) && AddCarSquash(hlsl);
+}
+
 // Returns true for a car-body vertex shader (it also gets the easter egg's bounce: see dealer.cpp).
 bool ApplyDirtSeamFix(std::string& hlsl, bool pixel)
 {
@@ -2056,23 +2079,7 @@ bool ApplyDirtSeamFix(std::string& hlsl, bool pixel)
             return false;
         if (!off && hlsl.find("o[9]") == std::string::npos)
             hlsl.insert(at + uv.size(), " o[9] = float4(frac(o[0].z + 0.5), 1, 0, 0);");
-        // The easter egg's squash: the model-space position (fetch 0, dequantised as q * w + vc[191]) is
-        // scaled per axis (x width, y height, z length) by vpoint.xyz. Point sprites are the only other
-        // reader of vpoint and these draws never are; the renderer sets it to 1, 1, 1 normally.
-        static const std::string fetch = "{ float4 t = VFetchK(0, r[0].x); r[";
-        if (size_t f = hlsl.find(fetch); f != std::string::npos)
-        {
-            const size_t from = f + fetch.size();
-            const std::string n = hlsl.substr(from, hlsl.find(']', from) - from);
-            const std::string r = "r[" + n + "]";
-            // vpoint.w 0: a body, scaled by vpoint.xyz; 1: a wheel, moved on screen by vpoint.xyz (clip x, y,
-            // w: its hub follows the body's squash, dealer.cpp DealerCarDraw).
-            hlsl.insert(hlsl.find('\n', f) + 1, "    if (" + r + ".w != 0 && vpoint.w == 0) { float3 m = " + r + ".xyz * " + r + ".w + vc[191].xyz; " + r +
-                ".xyz = (m * vpoint.xyz - vc[191].xyz) / " + r + ".w; }\n");
-        }
-        static const std::string end = "}\nvoid GuestVS(uint vindex, out float4 opos, out float4 o[16])\n";
-        if (size_t e = hlsl.find(end); e != std::string::npos)
-            hlsl.insert(e, "            if (vpoint.w > 0) opos.xyw += vpoint.xyz;\n");
+        AddCarSquash(hlsl);
         return true;
     }
     if (off)
@@ -2159,6 +2166,7 @@ const CompiledShader& GetShaderLocked(uint64_t hash, const std::vector<uint32_t>
                 cs.code = base.code;
                 cs.hlslSource = &base;
                 cs.carBody = base.carBody;
+                cs.carPart = base.carPart;
                 cs.state = CompiledShader::Ready;
                 g_stats.shadersCached++;
                 path = "variant";
@@ -2178,6 +2186,7 @@ const CompiledShader& GetShaderLocked(uint64_t hash, const std::vector<uint32_t>
         return cs;
     }
     cs.carBody = ApplyDirtSeamFix(cs.info.hlsl, pixel);
+    cs.carPart = !pixel && !cs.carBody && MarkCarPart(cs.info.hlsl);
     if (cs.carBody)
         Log("renderer: vs %016llx is a car body", (unsigned long long)hash);
     if (g_dumpHlsl)
@@ -6174,6 +6183,7 @@ void DrawImpl(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         float vscale[4], voffset[4];
         uint32_t vte[4];
         uint32_t vfl[32][4]; // vertex fetch layout of the bound shader
+        float vsquash[4][4]; // the easter egg's squash of car meshes (hlsl.cpp); zero = off
         float vwide[4];      // x: Hor+ factor (see hlsl.cpp)
         float vjitter[4];     // motion-vector variants: this frame's jitter (NDC)
     };
@@ -6390,10 +6400,11 @@ void DrawImpl(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     vc->point[1] = float(pointSize & 0xFFFF) / 8.0f;
     vc->point[2] = float(pointMinMax & 0xFFFF) / 8.0f;
     vc->point[3] = float(pointMinMax >> 16) / 8.0f;
-    // Car bodies read vpoint.xyz as their squash (the "whysthisdealer" easter egg, dealer.cpp).
-    if (vs.carBody)
+    // Car meshes read vsquash as their squash (the "whysthisdealer" easter egg, dealer.cpp).
+    memset(vc->vsquash, 0, sizeof(vc->vsquash));
+    if (vs.carBody || vs.carPart)
     {
-        DealerCarDraw(C().vsHash, vc->c, vc->point);
+        DealerCarDraw(C().vsHash, vc->c, vc->vsquash, vs.carBody);
         static LiveSwitch traceCar("FM2_TRACE_CAR_DRAWS");
         if (traceCar)
             Log("car draw: vs %016llx ps %016llx origin %.3f %.3f %.3f %.3f x %.3f %.3f %.3f", (unsigned long long)C().vsHash, (unsigned long long)C().psHash,

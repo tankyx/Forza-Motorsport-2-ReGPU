@@ -6,8 +6,8 @@
 // Foundation, played on a voice of its own, and its beats are found (Analyse: tempo and phase from the kick
 // drum, each beat snapped to its kick). On every beat the car bodies flatten hard and ease back up
 // (DealerSquash), timed from the voice's playback position each frame
-// (FM2_DEALER_OFFSET_MS shifts it for audio/display latency, default 0). The car-body vertex shaders scale
-// their model-space position by it (renderer.cpp: ApplyDirtSeamFix, vpoint.xyz).
+// (FM2_DEALER_OFFSET_MS shifts it for audio/display latency, default 0). Every mesh of a car takes it in
+// clip space (DealerCarDraw; renderer.cpp AddCarSquash, vsquash).
 #include <windows.h>
 
 #include <mfapi.h>
@@ -318,77 +318,86 @@ void DealerSquash(float scale[3])
 // The game's music is silent from the moment the song starts until the game closes (xma.cpp).
 bool DealerMutesMusic() { return g_on.load(std::memory_order_relaxed); }
 
-// One car-body-shader draw (renderer.cpp): what its vertex shader does with vpoint. Its clip position is
-// p.x c1 + p.y c0 + p.z c2 + c3 (an ordinary matrix: c3 is the model origin on screen, c0-c2 the model
-// axes). Body draws set the car of reference and are squashed in model space (vpoint.xyz: width, height,
-// length; vpoint.w 0). A wheel (a draw of another shader, following its car's body) keeps its shape and
-// moves with the body: its hub (its own c3), in the car's axes, is h = A^-1 (hub - origin); squashing
-// moves it by A (S - 1) h, added to its clip position (vpoint.xyz = clip x, y, w; vpoint.w 1).
-void DealerCarDraw(uint64_t vs, const float c[256][4], float point[4])
+// One car-mesh draw (renderer.cpp): the squash its vertex shader adds to its clip position. A mesh's clip
+// position is p.x c1 + p.y c0 + p.z c2 + c3 (an ordinary matrix: c3 is the model origin on screen, c0-c2 the
+// model axes; c0 is up, c1 across, c2 along). Body draws set the car of reference (origin o, axes A). Every
+// mesh of that car (the body, and tyres, brakes, glass drawn with their own transforms) is scaled in the
+// car's axes about its origin: a clip point p is l = A^-1 (p - o) in the car (from the x, y and w rows; z only
+// carries depth), and moves by A (S - 1) l. That is linear in p: K (p.xyw - o.xyw), K = A (S - 1) A^-1,
+// passed as `squash` (hlsl.cpp vsquash: rows 0-3 xyz K, rows 0-2 w o.xyw, row 3 w 1 = on).
+// `body`: a car-body shader (it can be the car of reference); other meshes only follow the car they're near.
+void DealerCarDraw(uint64_t vs, const float c[256][4], float squash[4][4], bool body)
 {
     float s[3];
     DealerSquash(s);
-    point[0] = s[0], point[1] = s[1], point[2] = s[2], point[3] = 0;
+    if (s[0] == 1 && s[1] == 1 && s[2] == 1)
+        return;
     static uint64_t bodyVs = 0;
     static float origin[4], axes[3][4];
-    static int up = 1;
+    static double inv[3][3];
+    static bool invertible = false;
+    const int rows[3] = { 0, 1, 3 };
     auto setBody = [&] {
         bodyVs = vs;
         memcpy(origin, c[3], sizeof(origin));
         for (int j = 0; j < 3; j++)
             memcpy(axes[j], c[j], sizeof(axes[j]));
-        // Up: the axis that points most vertically on screen (cars are seen roughly upright).
-        float best = -1;
+        double m[3][3];
+        for (int r = 0; r < 3; r++)
+            for (int j = 0; j < 3; j++)
+                m[r][j] = axes[j][rows[r]];
+        const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+            m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        invertible = std::abs(det) > 1e-12;
+        if (!invertible)
+            return;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+            {
+                // inverse = adjugate / det: inv[j][i] is the cofactor of m[i][j]
+                const int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
+                inv[j][i] = (m[i1][j1] * m[i2][j2] - m[i1][j2] * m[i2][j1]) / det;
+            }
+    };
+    // Where this draw's own origin sits in the reference car (model units), when there is one.
+    auto local = [&](double l[3]) {
         for (int j = 0; j < 3; j++)
         {
-            const float len = std::sqrt(axes[j][0] * axes[j][0] + axes[j][1] * axes[j][1]) + 1e-6f;
-            if (std::abs(axes[j][1]) / len > best)
-                best = std::abs(axes[j][1]) / len, up = j;
+            l[j] = 0;
+            for (int r = 0; r < 3; r++)
+                l[j] += inv[j][r] * (c[3][rows[r]] - origin[rows[r]]);
         }
     };
-    if (!bodyVs || vs == bodyVs)
-    {
+    if (body && (!bodyVs || vs == bodyVs))
         setBody();
+    else
+    {
+        if (!bodyVs || !invertible)
+            return;
+        double l[3];
+        local(l);
+        // Far from the car of reference: another car's body (now the reference), or a part of another car.
+        if (std::abs(l[0]) > 4 || std::abs(l[1]) > 4 || std::abs(l[2]) > 4)
+        {
+            if (!body)
+                return;
+            setBody();
+        }
+    }
+    if (!invertible)
         return;
-    }
-    point[0] = point[1] = point[2] = 0;
-    point[3] = 1;
-    // h from the x, y and w rows (z only carries depth): a 3x3 solve.
-    const int rows[3] = { 0, 1, 3 };
-    double m[3][3], d[3];
-    for (int r = 0; r < 3; r++)
+    // S per axis: c0 up (height), c1 across (width), c2 along (length).
+    const double k[3] = { s[1] - 1.0, s[0] - 1.0, s[2] - 1.0 };
+    for (int r = 0; r < 4; r++)
     {
-        for (int j = 0; j < 3; j++)
-            m[r][j] = axes[j][rows[r]];
-        d[r] = c[3][rows[r]] - origin[rows[r]];
+        for (int q = 0; q < 3; q++)
+        {
+            double v = 0;
+            for (int j = 0; j < 3; j++)
+                v += axes[j][r] * k[j] * inv[j][q];
+            squash[r][q] = float(v);
+        }
     }
-    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-        m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    if (std::abs(det) < 1e-9)
-        return;
-    double h[3];
-    for (int j = 0; j < 3; j++)
-    {
-        double t[3][3];
-        memcpy(t, m, sizeof(t));
-        for (int r = 0; r < 3; r++)
-            t[r][j] = d[r];
-        h[j] = (t[0][0] * (t[1][1] * t[2][2] - t[1][2] * t[2][1]) - t[0][1] * (t[1][0] * t[2][2] - t[1][2] * t[2][0]) +
-                   t[0][2] * (t[1][0] * t[2][1] - t[1][1] * t[2][0])) / det;
-    }
-    // Far from the car of reference: another car's body (drawn with another shader), now the reference.
-    if (std::abs(h[0]) > 4 || std::abs(h[1]) > 4 || std::abs(h[2]) > 4)
-    {
-        setBody();
-        point[0] = s[0], point[1] = s[1], point[2] = s[2], point[3] = 0;
-        return;
-    }
-    double move[4] = {};
-    for (int j = 0; j < 3; j++)
-    {
-        const double k = (j == up ? s[1] : s[0]) - 1.0;
-        for (int r = 0; r < 4; r++)
-            move[r] += axes[j][r] * k * h[j];
-    }
-    point[0] = float(move[0]), point[1] = float(move[1]), point[2] = float(move[3]);
+    squash[0][3] = origin[0], squash[1][3] = origin[1], squash[2][3] = origin[3];
+    squash[3][3] = 1;
 }
