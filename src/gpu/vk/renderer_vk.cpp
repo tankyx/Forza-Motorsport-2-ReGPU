@@ -54,7 +54,8 @@ struct State
     vk::Context context;
     vk::ShaderSet shaders;
     vk::SurfaceCache surfaces;
-    vk::TextureCache textures0; // the bindless uploader
+    vk::TextureCache textures0; // the bindless uploader (2D)
+    vk::TextureCache cubes;     // the same for cube maps (set 2)
     vk::DrawContext draw;
     vk::Resolve resolve;
 
@@ -388,6 +389,47 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
 {
     g.texSlots++;
     const TextureFetch fetch = ReadTextureFetch(slot);
+    if (fetch.Type() == 2 && fetch.Dimension() == 3 && TextureFormatSupported(fetch.Format()))
+    {
+        const uint64_t key = uint64_t(fetch.Address()) << 24 ^ uint64_t(fetch.Format()) << 16 ^ uint64_t(fetch.Width()) ^
+            (uint64_t(fetch.Height()) << 40) ^ 0xC0BEull;
+        uint32_t index = 0;
+        if (auto it = g.textures.find(key); it != g.textures.end())
+            index = it->second.index;
+        else
+        {
+            const uint32_t stride = TextureFaceStride(fetch);
+            std::vector<std::vector<uint8_t>> faces(6);
+            const uint8_t* pointers[6]{};
+            for (uint32_t face = 0; face < 6; face++)
+            {
+                TextureFetch faceFetch = fetch;
+                faceFetch.dwords[1] = (faceFetch.dwords[1] & ~0xFFFFF000u) | ((fetch.Address() + face * stride) & 0xFFFFF000u);
+                if (!DecodeTexture(faceFetch, faces[face]))
+                {
+                    g.texFailed++;
+                    return;
+                }
+                pointers[face] = faces[face].data();
+            }
+            index = vk::TextureAddCube(g.context, g.cubes, fetch.Width(), fetch.Height(), pointers);
+            if (index == UINT32_MAX)
+                return;
+            g.textures[key] = { index, 0 };
+        }
+        const uint32_t clampX = (fetch.dwords[0] >> 10) & 7, clampY = (fetch.dwords[0] >> 13) & 7;
+        const bool clamp = clampX != 0 && clampY != 0;
+        const bool point = ((fetch.dwords[3] >> 19) & 3) == 0;
+        pc.tinfo[slot][0] = (point ? (clamp ? 2u : 3u) : (clamp ? 1u : 0u));
+        pc.tinfo[slot][1] = fetch.Width();
+        pc.tinfo[slot][2] = fetch.Height();
+        pc.tinfo[slot][3] = 3; // cube
+        pc.tbias[slot][0] = fetch.LodBias();
+        memcpy(&pc.tbias[slot][1], &index, 4);
+        pc.tbias[slot][2] = pc.tbias[slot][3] = 1.0f;
+        g.texBound++;
+        return;
+    }
     // A resolve the renderer kept instead of writing to memory: sample that.
     if (auto it = g.resolved.find(fetch.Address() & 0x1FFFFFFF); it != g.resolved.end() && it->second.valid)
     {
@@ -576,6 +618,18 @@ bool Init()
         g.failed = true;
         return false;
     }
+    if (!vk::TextureCacheInit(g.context, g.cubes, 64, true))
+    {
+        g.failed = true;
+        return false;
+    }
+    {
+        // Slot 0 of the cube array is white too, so a draw that has no cube map samples white
+        // rather than an unbound descriptor.
+        const uint8_t white[4] = { 255, 255, 255, 255 };
+        const uint8_t* faces[6] = { white, white, white, white, white, white };
+        vk::TextureAddCube(g.context, g.cubes, 1, 1, faces);
+    }
     VkSamplerCreateInfo info{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     info.magFilter = info.minFilter = VK_FILTER_LINEAR;
     info.addressModeU = info.addressModeV = info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -603,7 +657,7 @@ bool Init()
         g.failed = true;
         return false;
     }
-    if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures0.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
+    if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures0.set, g.cubes.set, 16u << 20, 64u << 20))
     {
         Log("renderer_vk: draw context failed");
         g.failed = true;

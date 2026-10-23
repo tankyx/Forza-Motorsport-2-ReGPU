@@ -23,16 +23,21 @@ struct TextureCache
     std::vector<uint32_t> freeSlots;
     uint32_t capacity = 0;
     uint32_t next = 0; // the next untouched slot
+    bool cube = false; // images are cube-compatible, six layers
 };
 
 // capacity is the number of bindless slots (the renderer's heap is kBindless entries).
-bool TextureCacheInit(Context& context, TextureCache& cache, uint32_t capacity);
+// cube creates cube-compatible images (six layers) instead of 2D ones, for the set the shaders
+// sample gcube from.
+bool TextureCacheInit(Context& context, TextureCache& cache, uint32_t capacity, bool cube = false);
 void TextureCacheShutdown(Context& context, TextureCache& cache);
 
 // Uploads RGBA8 (tightly packed, top row first) and returns its bindless index, or UINT32_MAX
 // if the cache is full. Reuses a freed slot when there is one.
 uint32_t TextureAdd(Context& context, TextureCache& cache, uint32_t width, uint32_t height, const void* rgba,
     VkImageUsageFlags extraUsage = 0);
+// Six faces, each tightly packed RGBA8, in +X -X +Y -Y +Z -Z order.
+uint32_t TextureAddCube(Context& context, TextureCache& cache, uint32_t width, uint32_t height, const uint8_t* const faces[6]);
 // Reserves an index whose image is drawn into rather than uploaded (the renderer's resolves).
 // The image is created with the given usage and left in COLOR_ATTACHMENT_OPTIMAL.
 uint32_t TextureReserve(Context& context, TextureCache& cache, uint32_t width, uint32_t height);

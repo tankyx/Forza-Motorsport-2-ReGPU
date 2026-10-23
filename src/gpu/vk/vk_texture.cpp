@@ -2,11 +2,13 @@
 #include "gpu/vk/vk_texture.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace vk
 {
-bool TextureCacheInit(Context& context, TextureCache& cache, uint32_t capacity)
+bool TextureCacheInit(Context& context, TextureCache& cache, uint32_t capacity, bool cube)
 {
+    cache.cube = cube;
     VkDescriptorSetLayoutBinding binding{};
     binding.binding = 0; // set 1, binding 0: the 2D array (dxc's register space 1)
     binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -91,7 +93,8 @@ uint32_t TextureAdd(Context& context, TextureCache& cache, uint32_t width, uint3
     if (!cache.slots[index].image)
     {
         cache.slots[index] = CreateImage(context, width, height, VK_FORMAT_R8G8B8A8_UNORM,
-            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | extraUsage);
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | extraUsage,
+            cache.cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, cache.cube ? 6 : 1);
         if (!cache.slots[index].image)
             return UINT32_MAX;
         WriteSlot(context, cache, index, cache.slots[index]);
@@ -120,6 +123,62 @@ uint32_t TextureReserve(Context& context, TextureCache& cache, uint32_t width, u
         return UINT32_MAX;
     WriteSlot(context, cache, index, cache.slots[index]);
     // The descriptor points at a SHADER_READ image; the resolve moves it there when it is done.
+    return index;
+}
+
+uint32_t TextureAddCube(Context& context, TextureCache& cache, uint32_t width, uint32_t height, const uint8_t* const faces[6])
+{
+    uint32_t index;
+    if (!cache.freeSlots.empty())
+    {
+        index = cache.freeSlots.back();
+        cache.freeSlots.pop_back();
+    }
+    else if (cache.next < cache.capacity)
+        index = cache.next++;
+    else
+        return UINT32_MAX;
+    if (cache.slots[index].image)
+        DestroyImage(context, cache.slots[index]);
+    cache.slots[index] = CreateImage(context, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_VIEW_TYPE_CUBE, 6);
+    if (!cache.slots[index].image)
+        return UINT32_MAX;
+    WriteSlot(context, cache, index, cache.slots[index]);
+    // One upload per face: cheap enough for the handful of cube maps a scene has.
+    for (uint32_t face = 0; face < 6; face++)
+    {
+        void* staging = nullptr;
+        const VkDeviceSize bytes = VkDeviceSize(width) * height * 4;
+        VkBuffer buffer = CreateBuffer(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging);
+        if (!buffer)
+            return UINT32_MAX;
+        memcpy(staging, faces[face], size_t(bytes));
+        Submit(context, [&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier toCopy{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            toCopy.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toCopy.srcQueueFamilyIndex = toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toCopy.image = cache.slots[index].image;
+            toCopy.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, face, 1 };
+            toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                &toCopy);
+            VkBufferImageCopy region{};
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, face, 1 };
+            region.imageExtent = { width, height, 1 };
+            vkCmdCopyBufferToImage(cmd, buffer, cache.slots[index].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            VkImageMemoryBarrier toSampled = toCopy;
+            toSampled.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toSampled.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toSampled.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toSampled.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                nullptr, 1, &toSampled);
+        });
+        vkDeviceWaitIdle(context.device);
+        vkDestroyBuffer(context.device, buffer, nullptr);
+    }
     return index;
 }
 
