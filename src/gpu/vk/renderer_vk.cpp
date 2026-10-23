@@ -171,8 +171,10 @@ void DumpSurface(vk::Surface& surface)
             }
             rgba[i * 4 + 3] = 255;
         }
-        WritePng("out/vk_frame.png", surface.width, surface.height, rgba);
-        Log("renderer_vk: wrote out/vk_frame.png (%ux%u, %zu lit components)", surface.width, surface.height, lit);
+        char name[64];
+        snprintf(name, sizeof(name), "out/vk_frame_%llu.png", (unsigned long long)g.frame);
+        WritePng(name, surface.width, surface.height, rgba);
+        Log("renderer_vk: wrote %s (%ux%u, %zu lit components)", name, surface.width, surface.height, lit);
     }
     vkDeviceWaitIdle(g.context.device);
     vk::DestroyImage(g.context, resolved);
@@ -676,6 +678,15 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
             vc.info[1], vc.info[2], vc.info[3]);
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
+    }
+    {
+        // FM2_VK_LOG_DRAWS=<n>: the first n draws of a frame, with what places them.
+        static const uint32_t logDraws = getenv("FM2_VK_LOG_DRAWS") ? uint32_t(atoi(getenv("FM2_VK_LOG_DRAWS"))) : 0;
+        static uint32_t logged = 0;
+        if (logDraws && (initiator & 0x3F) == 4 && g.frame >= 900 && g.frame < 960 && logged++ < logDraws)
+            Log("draw_vk: frame %llu prim %u list %zu, scale %g %g offset %g %g vte %08x target %u %u slots %08x", (unsigned long long)g.frame,
+                initiator & 0x3F, list.size(), vc.vscale[0], vc.vscale[1], vc.voffset[0], vc.voffset[1], vc.vte[0], vc.info[2],
+                vc.info[3], ps->usedTextureSlots);
     }
     {
         // Which viewport the frame is actually drawn with (the dump reports the top ones).

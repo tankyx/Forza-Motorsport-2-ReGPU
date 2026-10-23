@@ -139,6 +139,12 @@ bool DrawList(const Context& context, DrawContext& draw, VkCommandBuffer cmd, Vk
     draw.constants.used = psOffset + sizeof(gpu::PSConstants);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    // The guest's scissor is not translated yet; until it is, every draw covers the whole
+    // target rather than whatever the pass happened to leave behind.
+    {
+        const VkRect2D full{ { 0, 0 }, { 16384, 16384 } };
+        vkCmdSetScissor(cmd, 0, 1, &full);
+    }
     const uint32_t offsets[2] = { uint32_t(vsOffset), uint32_t(psOffset) };
     VkDescriptorSet sets[3] = { draw.set0, textures, draw.bindlessCube ? draw.bindlessCube : textures };
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.layout, 0, 3, sets, 2, offsets);
@@ -174,6 +180,12 @@ bool DrawIndexed(const Context& context, DrawContext& draw, VkCommandBuffer cmd,
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    // The guest's scissor is not translated yet; until it is, every draw covers the whole
+    // target rather than whatever the pass happened to leave behind.
+    {
+        const VkRect2D full{ { 0, 0 }, { 16384, 16384 } };
+        vkCmdSetScissor(cmd, 0, 1, &full);
+    }
     const uint32_t offsets[2] = { uint32_t(vsOffset), uint32_t(psOffset) };
     // Set 2 is the cube array; a draw that has none still binds the 2D set there.
     VkDescriptorSet sets[3] = { draw.set0, textures, draw.bindlessCube ? draw.bindlessCube : textures };

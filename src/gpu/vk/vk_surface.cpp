@@ -143,9 +143,10 @@ void SurfaceBegin(Context& context, Surface& surface, VkCommandBuffer cmd, const
     begin.clearValueCount = 2;
     begin.pClearValues = values;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    // The translated vertex shaders already emit y-down NDC (hlsl.cpp: 1 - p.y / size.y * 2),
-    // so the viewport is not flipped: Vulkan and this clip space agree.
-    VkViewport viewport{ 0, 0, float(surface.width), float(surface.height), 0, 1 };
+    // hlsl.cpp emits `1 - p.y / size.y * 2`, i.e. y-down like the guest's framebuffer. Vulkan's
+    // NDC has y pointing down too but its framebuffer origin is top-left, so the viewport is
+    // flipped to land the image the right way up (the menu text is the quickest tell).
+    VkViewport viewport{ 0, float(surface.height), float(surface.width), -float(surface.height), 0, 1 };
     VkRect2D scissor{ { 0, 0 }, { surface.width, surface.height } };
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
