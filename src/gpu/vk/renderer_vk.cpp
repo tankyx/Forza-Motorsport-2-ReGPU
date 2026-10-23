@@ -560,10 +560,15 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     RenderSize(targetWidth, targetHeight);
     vc.info[2] = targetWidth;
     vc.info[3] = targetHeight;
-    // Screen-space draws carry guest pixels, not host ones: the trace below shows a rectangle
-    // whose corner sits at 639.5 in a 1280-wide target, so the guest's own target is half the
-    // host's. Dividing those by the guest size is the fix, but doing it unconditionally left the
-    // frame empty, so it stays behind a switch until the condition is pinned down.
+    // Screen-space draws (PA_CL_VTE_CNTL's scale/offset bits clear) carry *guest* pixels, not
+    // host ones: the trace shows a background rectangle whose corner sits at 639.5 while the host
+    // target is 1280 wide, and those draws landed in the top-left quadrant — the signature of
+    // dividing guest coordinates by the host size. Draws that go through the viewport transform
+    // (vte 0x43f and friends) are already in host pixels and keep the host size.
+    // Screen-space draws may carry guest pixels rather than host ones (the trace shows a
+    // background rectangle whose corner is at 639.5 in a 1280-wide target, and those draws land in
+    // the top-left quadrant), but dividing them by the guest size emptied the frame both times it
+    // was tried, so the rule is not pinned down yet. FM2_VK_HALF_TARGET forces it for experiments.
     static const bool halfTarget = getenv("FM2_VK_HALF_TARGET") != nullptr;
     if (halfTarget)
     {
@@ -957,7 +962,12 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
         if (ReadSurface(*last, rgba) && rgba.size() == size_t(1280) * 720 * 4)
             PresenterSubmitImage(1280, 720, std::move(rgba));
     }
-    if (last && (timeDump || (dumpAt < 0 && frame % 500 == 0)) && draws)
+    // FM2_VK_DUMP_FRAME=<n>: dump that exact frame. Comparing two builds needs the same frame,
+    // not the same wall-clock moment — the two land in different scenes otherwise, which has
+    // misled more than one conclusion already.
+    static const uint64_t dumpFrame = getenv("FM2_VK_DUMP_FRAME") ? strtoull(getenv("FM2_VK_DUMP_FRAME"), nullptr, 10) : 0;
+    const bool frameDump = dumpFrame && frame == dumpFrame;
+    if (last && (frameDump || timeDump || (dumpAt < 0 && !dumpFrame && frame % 500 == 0)) && draws)
     {
         static const bool test = getenv("FM2_VK_TESTDRAW") != nullptr;
         if (test)
