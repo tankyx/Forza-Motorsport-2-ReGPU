@@ -118,6 +118,7 @@ PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers = nullptr;
 PFN_vkBeginCommandBuffer vkBeginCommandBuffer = nullptr;
 PFN_vkEndCommandBuffer vkEndCommandBuffer = nullptr;
 PFN_vkFreeCommandBuffers vkFreeCommandBuffers = nullptr;
+PFN_vkResetCommandBuffer vkResetCommandBuffer = nullptr;
 PFN_vkQueueSubmit vkQueueSubmit = nullptr;
 PFN_vkQueueWaitIdle vkQueueWaitIdle = nullptr;
 
@@ -137,6 +138,9 @@ bool ResolveInstance(VkInstance instance)
         missing++;
     vkFreeCommandBuffers = reinterpret_cast<PFN_vkFreeCommandBuffers>(GetInstanceProcAddr(instance, "vkFreeCommandBuffers"));
     if (!vkFreeCommandBuffers)
+        missing++;
+    vkResetCommandBuffer = reinterpret_cast<PFN_vkResetCommandBuffer>(GetInstanceProcAddr(instance, "vkResetCommandBuffer"));
+    if (!vkResetCommandBuffer)
         missing++;
     vkQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(GetInstanceProcAddr(instance, "vkQueueSubmit"));
     if (!vkQueueSubmit)

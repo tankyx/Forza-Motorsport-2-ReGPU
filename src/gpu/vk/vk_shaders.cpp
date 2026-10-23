@@ -38,6 +38,9 @@ const VkShader* ShaderGet(Context& context, ShaderSet& set, uint64_t hash, const
     shader.hlsl = translated.hlsl;
     shader.constantsUsed = translated.constantsUsed;
     shader.usedTextureSlots = translated.usedTextureSlots;
+    for (const auto& entry : translated.vertexFetchLayout)
+        shader.vertexFetchLayout.insert(shader.vertexFetchLayout.end(), entry.begin(), entry.end());
+    shader.vertexFetchConstants = translated.vertexFetchConstants;
 
     std::vector<uint32_t> spirv;
     std::string error;

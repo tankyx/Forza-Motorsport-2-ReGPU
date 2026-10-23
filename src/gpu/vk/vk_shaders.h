@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <vulkan/vulkan.h>
 
 #include "gpu/vk/vk_context.h"
@@ -18,6 +19,8 @@ struct VkShader
     std::string hlsl;        // kept for the renderer's per-shader edits (car body squash, dirt seam fix)
     uint32_t constantsUsed = 0;
     uint32_t usedTextureSlots = 0;
+    std::vector<uint32_t> vertexFetchLayout;     // flat uint4s for vc.vfl
+    std::vector<uint32_t> vertexFetchConstants;  // which vf[] slots the shader reads
     bool pixel = false;
     bool ok = false;
     std::string error;

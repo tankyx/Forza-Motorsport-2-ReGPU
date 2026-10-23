@@ -16,6 +16,7 @@ extern PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers;
 extern PFN_vkBeginCommandBuffer vkBeginCommandBuffer;
 extern PFN_vkEndCommandBuffer vkEndCommandBuffer;
 extern PFN_vkFreeCommandBuffers vkFreeCommandBuffers;
+extern PFN_vkResetCommandBuffer vkResetCommandBuffer;
 extern PFN_vkQueueSubmit vkQueueSubmit;
 extern PFN_vkQueueWaitIdle vkQueueWaitIdle;
 extern PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
@@ -89,6 +90,7 @@ extern PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
 #define vkBeginCommandBuffer vkldr::vkBeginCommandBuffer
 #define vkEndCommandBuffer vkldr::vkEndCommandBuffer
 #define vkFreeCommandBuffers vkldr::vkFreeCommandBuffers
+#define vkResetCommandBuffer vkldr::vkResetCommandBuffer
 #define vkQueueSubmit vkldr::vkQueueSubmit
 #define vkQueueWaitIdle vkldr::vkQueueWaitIdle
 #define vkAllocateDescriptorSets vkldr::vkAllocateDescriptorSets

@@ -27,7 +27,8 @@ struct DrawContext
 {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     DrawRing constants;   // VSConstants then PSConstants, per draw
-    DrawRing indices;     // expanded index lists, per draw
+    DrawRing indices;     // expanded index lists, for vkCmdDrawIndexed
+    DrawRing guestMemory; // the expanded index list the vertex shader reads (gmem)
     VkDescriptorSet set0 = VK_NULL_HANDLE;      // constants (dynamic), guest memory, samplers
     VkDescriptorSet bindless2D = VK_NULL_HANDLE; // set 1
     VkDescriptorSet bindlessCube = VK_NULL_HANDLE; // set 2
@@ -37,8 +38,8 @@ struct DrawContext
 
 // constantsBytes should hold at least a few hundred draws' worth of both blocks (they are
 // 6352 and 5184 bytes); indexBytes a frame's expanded lists (the D3D12 path uses 64 MB).
-bool DrawInit(Context& context, DrawContext& draw, VkBuffer gmem, VkBuffer gphys, VkSampler samplers[4],
-    VkDescriptorSet bindless2D, VkDescriptorSet bindlessCube, VkDeviceSize constantsBytes, VkDeviceSize indexBytes);
+bool DrawInit(Context& context, DrawContext& draw, VkBuffer gphys, VkSampler samplers[4], VkDescriptorSet bindless2D,
+    VkDescriptorSet bindlessCube, VkDeviceSize constantsBytes, VkDeviceSize listBytes);
 void DrawDestroy(Context& context, DrawContext& draw);
 
 // Rewinds both rings: called at the start of a frame.
@@ -49,6 +50,13 @@ void DrawBeginFrame(DrawContext& draw);
 // "direct" case: triangle lists and restart-free strips read straight from guest memory).
 bool DrawIndexed(const Context& context, DrawContext& draw, VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet textures,
     const gpu::VSConstants& vs, const gpu::PSConstants& ps, const uint32_t* indices, uint32_t count, bool indexed);
+
+// Records one draw the way the translated shaders expect: the expanded index list is appended
+// to the guest-memory ring and its offset goes into vc.info.x, then the vertices are drawn
+// non-indexed — the vertex shader fetches each index out of that list itself. This is the
+// renderer's normal path (the D3D12 side does exactly this with its upload ring).
+bool DrawList(const Context& context, DrawContext& draw, VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet textures,
+    gpu::VSConstants vs, const gpu::PSConstants& ps, const uint32_t* list, uint32_t count);
 
 // The blend factor the guest set (constant blend factors), applied with vkCmdSetBlendConstants.
 void DrawSetBlendConstants(VkCommandBuffer cmd, const float rgba[4]);

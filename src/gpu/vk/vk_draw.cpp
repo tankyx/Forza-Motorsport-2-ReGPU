@@ -33,11 +33,12 @@ bool MakeRing(const Context& context, DrawRing& ring, VkDeviceSize size, VkBuffe
 VkDeviceSize Align(VkDeviceSize value, VkDeviceSize alignment) { return (value + alignment - 1) & ~(alignment - 1); }
 }
 
-bool DrawInit(Context& context, DrawContext& draw, VkBuffer gmem, VkBuffer gphys, VkSampler samplers[4],
-    VkDescriptorSet bindless2D, VkDescriptorSet bindlessCube, VkDeviceSize constantsBytes, VkDeviceSize indexBytes)
+bool DrawInit(Context& context, DrawContext& draw, VkBuffer gphys, VkSampler samplers[4], VkDescriptorSet bindless2D,
+    VkDescriptorSet bindlessCube, VkDeviceSize constantsBytes, VkDeviceSize listBytes)
 {
     if (!MakeRing(context, draw.constants, constantsBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
-        !MakeRing(context, draw.indices, indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT))
+        !MakeRing(context, draw.indices, listBytes / 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT) ||
+        !MakeRing(context, draw.guestMemory, listBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
         return false;
     draw.constantsInfo = { draw.constants.buffer, 0, VK_WHOLE_SIZE };
     draw.bindless2D = bindless2D;
@@ -63,7 +64,7 @@ bool DrawInit(Context& context, DrawContext& draw, VkBuffer gmem, VkBuffer gphys
     if (vkAllocateDescriptorSets(context.device, &allocate, &draw.set0) != VK_SUCCESS)
         return false;
 
-    VkDescriptorBufferInfo guestMemory{ gmem, 0, VK_WHOLE_SIZE };
+    VkDescriptorBufferInfo guestMemory{ draw.guestMemory.buffer, 0, VK_WHOLE_SIZE };
     VkDescriptorBufferInfo guestPhysical{ gphys, 0, VK_WHOLE_SIZE };
     VkDescriptorImageInfo samplerInfo[4]{};
     for (int i = 0; i < 4; i++)
@@ -94,7 +95,7 @@ bool DrawInit(Context& context, DrawContext& draw, VkBuffer gmem, VkBuffer gphys
 
 void DrawDestroy(Context& context, DrawContext& draw)
 {
-    for (DrawRing* ring : { &draw.constants, &draw.indices })
+    for (DrawRing* ring : { &draw.constants, &draw.indices, &draw.guestMemory })
     {
         if (ring->cpu)
             vkUnmapMemory(context.device, ring->memory);
@@ -114,6 +115,35 @@ void DrawBeginFrame(DrawContext& draw)
 {
     draw.constants.used = 0;
     draw.indices.used = 0;
+    draw.guestMemory.used = 0;
+}
+
+bool DrawList(const Context& context, DrawContext& draw, VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet textures,
+    gpu::VSConstants vs, const gpu::PSConstants& ps, const uint32_t* list, uint32_t count)
+{
+    const VkDeviceSize alignment = 256;
+    const VkDeviceSize listOffset = Align(draw.guestMemory.used, alignment);
+    if (listOffset + VkDeviceSize(count) * 4 > draw.guestMemory.size)
+        return false;
+    memcpy(draw.guestMemory.cpu + listOffset, list, size_t(count) * 4);
+    draw.guestMemory.used = listOffset + VkDeviceSize(count) * 4;
+    vs.info[0] = uint32_t(listOffset); // where the vertex shader finds the list
+
+    const VkDeviceSize vsOffset = Align(draw.constants.used, alignment);
+    const VkDeviceSize psOffset = Align(vsOffset + sizeof(gpu::VSConstants), alignment);
+    if (psOffset + sizeof(gpu::PSConstants) > draw.constants.size)
+        return false;
+    memcpy(draw.constants.cpu + vsOffset, &vs, sizeof vs);
+    memcpy(draw.constants.cpu + psOffset, &ps, sizeof ps);
+    draw.constants.used = psOffset + sizeof(gpu::PSConstants);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const uint32_t offsets[2] = { uint32_t(vsOffset), uint32_t(psOffset) };
+    VkDescriptorSet sets[3] = { draw.set0, textures, draw.bindlessCube ? draw.bindlessCube : textures };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.layout, 0, 3, sets, 2, offsets);
+    vkCmdDraw(cmd, count, 1, 0, 0);
+    (void)context;
+    return true;
 }
 
 bool DrawIndexed(const Context& context, DrawContext& draw, VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet textures,
