@@ -975,7 +975,10 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
                 memcpy(&index, &pc.tbias[slot][1], 4);
                 std::vector<uint8_t> rgba;
                 const bool decoded = DecodeTexture(f, rgba);
-                Log("drawtex_vk:   slot %u: fetch %08x format %u (%s) %ux%u pitch %u tiled %d swizzle %03X -> index %u, dim %u%s",
+                    static const uint32_t dumpConstants[5] = { 13, 21, 29, 254, 255 };
+                for (uint32_t c : dumpConstants)
+                    Log("drawtex_vk:   pc[%u] = %g %g %g %g", c, pc.c[c][0], pc.c[c][1], pc.c[c][2], pc.c[c][3]);
+            Log("drawtex_vk:   slot %u: fetch %08x format %u (%s) %ux%u pitch %u tiled %d swizzle %03X -> index %u, dim %u%s",
                     slot, f.Address(), f.Format(), TextureFormatName(f.Format()), f.Width(), f.Height(), f.Pitch(), int(f.Tiled()),
                     f.Swizzle(), index, pc.tinfo[slot][3], decoded ? "" : " (decode failed)");
                 if (decoded)
