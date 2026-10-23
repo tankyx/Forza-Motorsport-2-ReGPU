@@ -573,6 +573,18 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
             if (index == UINT32_MAX)
                 return;
             g.textures[key] = { index, hash };
+            // FM2_VK_TRACE_TEX=<n>: the first n textures of a run, with the centre pixel
+            // of what was decoded — a magenta or black element names its own format.
+            static const uint32_t traceTex = getenv("FM2_VK_TRACE_TEX") ? uint32_t(atoi(getenv("FM2_VK_TRACE_TEX"))) : 0;
+            static uint32_t tracedTex = 0;
+            if (traceTex && tracedTex < traceTex)
+            {
+                tracedTex++;
+                const uint8_t* centre = &rgba[(size_t(fetch.Height() / 2) * fetch.Width() + fetch.Width() / 2) * 4];
+                Log("tex_vk: %08x format %u (%s) %ux%u pitch %u tiled %d swizzle %03X -> centre %u %u %u %u", fetch.Address(),
+                    fetch.Format(), TextureFormatName(fetch.Format()), fetch.Width(), fetch.Height(), fetch.Pitch(),
+                    int(fetch.Tiled()), fetch.Swizzle(), centre[0], centre[1], centre[2], centre[3]);
+            }
         }
     }
 
