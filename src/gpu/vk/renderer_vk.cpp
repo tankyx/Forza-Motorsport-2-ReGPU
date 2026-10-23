@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <unordered_map>
 #include <vector>
 
@@ -788,7 +789,14 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
     // Submit the frame and start the next one. The command buffer is reused: waiting keeps it
     // simple, and the first frames are not where the time goes.
     EndFrame();
-    if (last && frame % 500 == 0 && draws)
+    // FM2_VK_DUMP_AT=<seconds>: dump once, at that point in time, so a Vulkan frame can be
+    // compared with a D3D12 one taken at the same moment (FM2_DUMP_AT).
+    static const double dumpAt = getenv("FM2_VK_DUMP_AT") ? atof(getenv("FM2_VK_DUMP_AT")) : -1.0;
+    static const auto started = std::chrono::steady_clock::now();
+    static bool dumpedOnce = false;
+    const bool timeDump = dumpAt >= 0 && !dumpedOnce &&
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() >= dumpAt;
+    if (last && (timeDump || (dumpAt < 0 && frame % 500 == 0)) && draws)
     {
         static const bool test = getenv("FM2_VK_TESTDRAW") != nullptr;
         if (test)
