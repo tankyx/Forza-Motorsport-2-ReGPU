@@ -2,7 +2,7 @@
 
   make_patch.py <version> [launcher dir]
 
-Contents (paths relative to the install): build/tu/fm2.exe, the launcher (launcher/..., from the given folder or
+Contents (paths relative to the install): build/tu/fm2.exe and d3dcompiler_47.dll, the launcher (launcher/..., from the given folder or
 installer/payload/launcher, which build-installer.ps1 publishes) and changelog.txt. Names are written with '/',
 and the zip is read back and checked: no control characters, nothing outside the install.
 """
@@ -20,6 +20,7 @@ def main(argv):
     version = argv[1]
     launcher = argv[2] if len(argv) > 2 else os.path.join(ROOT, 'installer', 'payload', 'launcher')
     files = [(os.path.join(ROOT, 'build', 'tu', 'fm2.exe'), 'build/tu/fm2.exe'),
+             (os.path.join(ROOT, 'build', 'tu', 'd3dcompiler_47.dll'), 'build/tu/d3dcompiler_47.dll'),
              (os.path.join(ROOT, 'out', 'release', 'FM2', 'changelog.txt'), 'changelog.txt')]
     if not os.path.isfile(os.path.join(launcher, 'FM2Launcher.exe')):
         print('no launcher at', launcher, '(run installer/build-installer.ps1 first)')
