@@ -560,6 +560,14 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     RenderSize(targetWidth, targetHeight);
     vc.info[2] = targetWidth;
     vc.info[3] = targetHeight;
+    // FM2_VK_HALF_TARGET=1: the guest may author its screen-space draws against half the host
+    // target (the 360's EDRAM view); this says so without guessing.
+    static const bool halfTarget = getenv("FM2_VK_HALF_TARGET") != nullptr;
+    if (halfTarget)
+    {
+        vc.info[2] = targetWidth / 2;
+        vc.info[3] = targetHeight / 2;
+    }
     const uint32_t pointSize = gpureg::Get(0x2085 /* PA_SU_POINT_SIZE */), pointMinMax = gpureg::Get(0x2089 /* PA_SU_POINT_MINMAX */);
     vc.point[0] = float(pointSize >> 16) / 8.0f;
     vc.point[1] = float(pointSize & 0xFFFF) / 8.0f;
@@ -866,7 +874,7 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         // FM2_VK_LOG_DRAWS=<n>: the first n draws of a frame, with what places them.
         static const uint32_t logDraws = getenv("FM2_VK_LOG_DRAWS") ? uint32_t(atoi(getenv("FM2_VK_LOG_DRAWS"))) : 0;
         static uint32_t logged = 0;
-        if (logDraws && (initiator & 0x3F) == 4 && g.frame >= 900 && g.frame < 960 && logged++ < logDraws)
+        if (logDraws && g.frame >= 900 && g.frame < 960 && logged++ < logDraws)
             Log("draw_vk: frame %llu prim %u list %zu, scale %g %g offset %g %g vte %08x target %u %u slots %08x", (unsigned long long)g.frame,
                 initiator & 0x3F, list.size(), vc.vscale[0], vc.vscale[1], vc.voffset[0], vc.voffset[1], vc.vte[0], vc.info[2],
                 vc.info[3], ps->usedTextureSlots);
