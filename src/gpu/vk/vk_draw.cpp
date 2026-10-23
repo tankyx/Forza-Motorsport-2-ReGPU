@@ -125,7 +125,8 @@ bool DrawList(const Context& context, DrawContext& draw, VkCommandBuffer cmd, Vk
     const VkDeviceSize listOffset = Align(draw.guestMemory.used, alignment);
     if (listOffset + VkDeviceSize(count) * 4 > draw.guestMemory.size)
         return false;
-    memcpy(draw.guestMemory.cpu + listOffset, list, size_t(count) * 4);
+    if (count)
+        memcpy(draw.guestMemory.cpu + listOffset, list, size_t(count) * 4);
     draw.guestMemory.used = listOffset + VkDeviceSize(count) * 4;
     vs.info[0] = uint32_t(listOffset); // where the vertex shader finds the list
 

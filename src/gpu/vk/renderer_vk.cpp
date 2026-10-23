@@ -57,6 +57,7 @@ struct State
     std::unordered_map<vk::StateKey, VkPipeline, StateKeyHash> pipelines;
 
     uint64_t vsHash = 0, psHash = 0;
+    VkShaderModule flatModule = VK_NULL_HANDLE; // the FM2_VK_TESTPS shader, when used
     std::vector<uint32_t> vsCode, psCode;
     uint64_t frame = 0;
     bool reportedDraws = false;
@@ -163,6 +164,116 @@ void DumpSurface(vk::Surface& surface)
     vkDestroyBuffer(g.context.device, copy, nullptr);
 }
 
+namespace
+{
+const char kTestVs[] = R"(
+struct VSOut
+{
+    float4 pos : SV_Position;
+    float4 uv : TEXCOORD0;
+};
+VSOut main(uint id : SV_VertexID)
+{
+    float2 p = float2((id << 1) & 2, id & 2);
+    VSOut o;
+    o.pos = float4(p * 2 - 1, 0, 1);
+    o.uv = float4(p, 0, 1);
+    return o;
+}
+)";
+
+const char kTestPs[] = R"(
+struct VSOut
+{
+    float4 pos : SV_Position;
+    float4 uv : TEXCOORD0;
+};
+float4 main(VSOut input) : SV_Target0
+{
+    return float4(0.9, 0.2, 0.6, 1); // flat magenta: nothing to get wrong
+}
+)";
+
+VkShaderModule MakeTestModule(const std::vector<uint32_t>& code)
+{
+    VkShaderModuleCreateInfo info{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    info.codeSize = code.size() * 4;
+    info.pCode = code.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    return vkCreateShaderModule(g.context.device, &info, nullptr, &module) == VK_SUCCESS ? module : VK_NULL_HANDLE;
+}
+
+// The flat magenta pixel shader, compiled once (FM2_VK_TESTPS).
+const vk::VkShader* FlatPixelShader()
+{
+    static vk::VkShader shader;
+    static bool tried = false;
+    if (!tried)
+    {
+        tried = true;
+        std::vector<uint32_t> code;
+        std::string error;
+        if (vk::CompileHlsl(kTestPs, true, vk::HashSource(kTestPs), "out/vkcache", code, &error))
+        {
+            shader.module = MakeTestModule(code);
+            shader.ok = shader.module != VK_NULL_HANDLE;
+            shader.pixel = true;
+            g.flatModule = shader.module;
+        }
+        else
+            Log("renderer_vk: flat pixel shader: %s", error.c_str());
+    }
+    return shader.ok ? &shader : nullptr;
+}
+
+// FM2_VK_TESTDRAW=1: one extra pass into the surface with a magenta full-screen triangle.
+void TestDraw(vk::Surface& surface)
+{
+    static VkPipeline pipeline = VK_NULL_HANDLE;
+    Log("renderer_vk: test draw: begin (pipeline %p)", (void*)pipeline);
+    if (!pipeline)
+    {
+        std::vector<uint32_t> vsCode, psCode;
+        std::string error;
+        if (!vk::CompileHlsl(kTestVs, false, vk::HashSource(kTestVs), "out/vkcache", vsCode, &error) ||
+            !vk::CompileHlsl(kTestPs, true, vk::HashSource(kTestPs), "out/vkcache", psCode, &error))
+        {
+            Log("renderer_vk: test shaders: %s", error.c_str());
+            return;
+        }
+        Log("renderer_vk: test draw: shaders compiled");
+        VkShaderModule vs = MakeTestModule(vsCode), ps = MakeTestModule(psCode);
+        vk::StateKey key;
+        key.blend = 0x00010001;           // opaque
+        key.stencilMaskMode = 0x0F << 24; // all channels written
+        vk::TargetFormats targets;
+        targets.samples = surface.samples;
+        if (!vk::CreatePipeline(g.context, key, vs, ps, g.draw.layout, surface.pass, targets, pipeline))
+        {
+            Log("renderer_vk: test pipeline failed");
+            return;
+        }
+        vkDestroyShaderModule(g.context.device, vs, nullptr);
+        vkDestroyShaderModule(g.context.device, ps, nullptr);
+        Log("renderer_vk: test draw: pipeline %p", (void*)pipeline);
+    }
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.05f;
+    clear.float32[1] = 0.10f;
+    clear.float32[2] = 0.25f;
+    clear.float32[3] = 1.0f;
+    vk::SurfaceBegin(g.context, surface, g.cmd, &clear);
+    Log("renderer_vk: test draw: pass open");
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    VkDescriptorSet sets[3] = { g.draw.set0, g.textures.set, g.textures.set };
+    const uint32_t offsets[2] = { 0, 0 };
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.draw.layout, 0, 3, sets, 2, offsets);
+    vkCmdDraw(g.cmd, 3, 1, 0, 0);
+    vk::SurfaceEnd(g.context, surface, g.cmd);
+    Log("renderer_vk: test draw: recorded");
+}
+}
+
 void ClosePass()
 {
     if (!g.passOpen)
@@ -219,6 +330,17 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     vc.vte[0] = gpureg::Get(0x2206); // PA_CL_VTE_CNTL
     vc.vte[1] = vc.vte[2] = vc.vte[3] = 0;
     vc.vwide[0] = vc.vwide[1] = vc.vwide[2] = vc.vwide[3] = 1.0f;
+    // The target size and the point-sprite sizes, as the D3D12 path sets them: 2D draws and
+    // point sprites are placed from these, not from the viewport.
+    uint32_t targetWidth = 0, targetHeight = 0;
+    RenderSize(targetWidth, targetHeight);
+    vc.info[2] = targetWidth;
+    vc.info[3] = targetHeight;
+    const uint32_t pointSize = gpureg::Get(0x2085 /* PA_SU_POINT_SIZE */), pointMinMax = gpureg::Get(0x2089 /* PA_SU_POINT_MINMAX */);
+    vc.point[0] = float(pointSize >> 16) / 8.0f;
+    vc.point[1] = float(pointSize & 0xFFFF) / 8.0f;
+    vc.point[2] = float(pointMinMax & 0xFFFF) / 8.0f;
+    vc.point[3] = float(pointMinMax >> 16) / 8.0f;
     // Pixel shader: alpha test and the texture tables. Indices point at the null texture until
     // the texture capture exists (decode + upload), so a draw samples white rather than garbage.
     pc.info[0] = 7; // alpha test always passes
@@ -404,7 +526,12 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     }
 
     static const bool noCull = getenv("FM2_VK_NOCULL") != nullptr;
-    const vk::StateKey key = MakeKey(g.vsHash, g.psHash, !noCull && (initiator & 0x3F) == 4);
+    // FM2_VK_TESTPS=1: the guest's vertex shader with a flat magenta pixel shader. If shapes
+    // appear, the vertex path (fetch, layout, constants) is right and the pixel side is not.
+    if (getenv("FM2_VK_TESTPS"))
+        if (const vk::VkShader* flat = FlatPixelShader())
+            ps = flat;
+    const vk::StateKey key = MakeKey(g.vsHash, ps->module == g.flatModule ? 0 : g.psHash, !noCull && (initiator & 0x3F) == 4);
     VkPipeline pipeline = PipelineFor(key, vs, ps, *surface);
     if (!pipeline)
     {
@@ -471,8 +598,16 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
     // Submit the frame and start the next one. The command buffer is reused: waiting keeps it
     // simple, and the first frames are not where the time goes.
     EndFrame();
-    if (last && draws && frame % 100 == 0)
+    if (last && frame % 500 == 0 && draws)
+    {
+        static const bool test = getenv("FM2_VK_TESTDRAW") != nullptr;
+        if (test)
+        {
+            TestDraw(*last); // records into the same command buffer; EndFrame below submits it
+        }
+        EndFrame();
         DumpSurface(*last);
+    }
     g.frame = frame;
     g.drawsThisFrame = 0;
     vk::DrawBeginFrame(g.draw);
