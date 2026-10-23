@@ -1,0 +1,5 @@
+#!/bin/sh
+# The Windows Python launcher, for build steps that call "py -3 -I ...": drop the -3 and use
+# the host's python3. linux/build.sh puts this directory on PATH.
+[ "$1" = "-3" ] && shift
+exec python3 "$@"

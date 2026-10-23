@@ -1,6 +1,7 @@
 *.iso
 /build/
 /game/
+/game
 /out/
 *.log
 /frame.png

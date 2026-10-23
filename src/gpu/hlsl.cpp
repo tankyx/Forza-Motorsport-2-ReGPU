@@ -195,9 +195,19 @@ float3 CubeDirection(float3 stf)
 
 float4 TFetchRaw(uint slot, float3 coord, bool denorm, bool vertexStage, float bias, float2 texel);
 
-// Fetch swizzle (3 bits per channel: 0-3 component, 4 zero, 5 one) for
-// textures that live on the GPU; CPU-decoded textures are swizzled already.
-// texel: the instruction's texel offset (PCF taps in shadow filters), in texels.
+// Sampling with a LOD bias is a pixel-shader-only operation: a vertex shader cannot compute an
+// implicit LOD, and dxc rejects the module outright ("sampling with implicit lod is only allowed
+// in fragment and compute shaders"), where fxc merely ignored the dead branch. The translator
+// emits the same source for both stages, so the stage picks the form here. A macro, not a
+// function: a call in the fetch path keeps fxc from inlining and costs half the frame rate.
+#ifdef FM2_VERTEX_STAGE
+#define FM2_SAMPLE_BIAS_2D(t, s, uv, bias) ((t).SampleLevel((s), (uv), max((bias), 0)))
+#define FM2_SAMPLE_BIAS_CUBE(t, s, dir, bias) ((t).SampleLevel((s), (dir), max((bias), 0)))
+#else
+#define FM2_SAMPLE_BIAS_2D(t, s, uv, bias) ((t).SampleBias((s), (uv), (bias)))
+#define FM2_SAMPLE_BIAS_CUBE(t, s, dir, bias) ((t).SampleBias((s), (dir), (bias)))
+#endif
+
 float4 TFetch(uint slot, float3 coord, bool denorm, bool vertexStage, float bias, float2 texel)
 {
     float4 v = TFetchRaw(slot, coord, denorm, vertexStage, bias, texel);
@@ -224,7 +234,7 @@ float4 TFetchRaw(uint slot, float3 coord, bool denorm, bool vertexStage, float b
     if ((tinfo[slot].w & 0xFFu) == 3)
     {
         float3 dir = CubeDirection(coord);
-        return vertexStage ? tc.SampleLevel(sLinearClamp, dir, max(bias, 0)) : tc.SampleBias(sLinearClamp, dir, bias);
+        return vertexStage ? tc.SampleLevel(sLinearClamp, dir, max(bias, 0)) : FM2_SAMPLE_BIAS_CUBE(tc, sLinearClamp, dir, bias);
     }
     float2 uv = coord.xy;
     const float2 texelSize = float2(max(tinfo[slot].yz & 0xFFFFu, uint2(1, 1)));
@@ -242,10 +252,10 @@ float4 TFetchRaw(uint slot, float3 coord, bool denorm, bool vertexStage, float b
     uint mode = tinfo[slot].x & 3u;
     if (vertexStage)
         return t.SampleLevel(sLinearClamp, uv, max(bias, 0));
-    if (mode == 1) return t.SampleBias(sLinearClamp, uv, bias);
-    if (mode == 2) return t.SampleBias(sPointClamp, uv, bias);
-    if (mode == 3) return t.SampleBias(sPointWrap, uv, bias);
-    return t.SampleBias(sLinearWrap, uv, bias);
+    if (mode == 1) return FM2_SAMPLE_BIAS_2D(t, sLinearClamp, uv, bias);
+    if (mode == 2) return FM2_SAMPLE_BIAS_2D(t, sPointClamp, uv, bias);
+    if (mode == 3) return FM2_SAMPLE_BIAS_2D(t, sPointWrap, uv, bias);
+    return FM2_SAMPLE_BIAS_2D(t, sLinearWrap, uv, bias);
 }
 
 float4 CubeOp(float4 a, float4 b)
@@ -586,7 +596,10 @@ struct Emitter
             char call[320];
             snprintf(call, sizeof(call), "TFetch(%u, %s, %s, %s, %.4f + tbias[%u].x, float2(%.1f, %.1f))", f.constIndex, uv.c_str(),
                 f.denormalized ? "true" : "false", pixel ? "false" : "true", f.lodBias, f.constIndex, f.offsetX, f.offsetY);
-            body = std::string("{ float4 t = ") + call + "; " + DestSwizzleWrite(f.dest, f.destSwizzle, "t") + "}";
+            // Declared, then assigned: fxc drops the value when the fetch is the initializer of a
+            // declaration in some shaders ("internal error: invalid access of unbound variable",
+            // the Suzuka grandstand pixel shader 0xcc2c1b5affd62985 among them).
+            body = std::string("{ float4 t; t = ") + call + "; " + DestSwizzleWrite(f.dest, f.destSwizzle, "t") + "}";
             result.usedTextureSlots |= 1u << f.constIndex;
         }
         else if (f.opcode == 18 && pixel)
@@ -637,13 +650,28 @@ struct Emitter
     void EmitProgram()
     {
         bool linear = true;
+        bool loops = false;
         for (const Cf& cf : shader.cf)
+        {
             linear = linear && cf.op() != CfOp::CondJmp && cf.op() != CfOp::LoopStart && cf.op() != CfOp::LoopEnd &&
                 cf.op() != CfOp::CondCall && cf.op() != CfOp::Return;
+            loops = loops || cf.op() == CfOp::LoopStart || cf.op() == CfOp::LoopEnd;
+        }
         if (!linear)
         {
             Line("uint cfpc = 0;");
-            Line("[loop] for (uint guard = 0; guard < 1024 && cfpc != 0xFFFFu; guard++)");
+            // Loop and call state for the control flow below (the hardware allows 4 levels of
+            // each). aL is the loop index used by relative constant addressing: a loop's
+            // parameters live in one constant register (count, start, step).
+            if (loops)
+            {
+                Line("int loopIter[4] = {0, 0, 0, 0}, loopCount[4] = {0, 0, 0, 0}, loopStart[4] = {0, 0, 0, 0},");
+                Line("    loopStep[4] = {0, 0, 0, 0}, loopAt[4] = {0, 0, 0, 0}; int loopDepth = 0;");
+            }
+            Line("int callRet[4] = {0, 0, 0, 0}; int callDepth = 0;");
+            // The guard is a safety net against a program that never ends; it must be larger
+            // than the longest legitimate run (a 255-iteration loop over several instructions).
+            Line(std::string("[loop] for (uint guard = 0; guard < ") + (loops ? "65536" : "1024") + "u && cfpc != 0xFFFFu; guard++)");
             Line("{");
             indent++;
         }
@@ -705,6 +733,92 @@ struct Emitter
                 Line("continue;");
                 break;
             }
+            case CfOp::LoopStart:
+            {
+                // loop_start aL, i#: the loop's count/start/step are in the constant register
+                // i# (xenos::LoopConstant: count 8 bits, start 8 bits, step signed 8 bits).
+                const uint32_t skipTo = cf.lo & 0x1FFF;
+                const bool repeat = (cf.lo >> 13) & 1;
+                const uint32_t loopId = (cf.lo >> 16) & 0x1F;
+                result.constantsUsed = std::max(result.constantsUsed, loopId + 1);
+                const std::string params = std::string("asuint(") + (pixel ? "pc" : "vc") + "[" + std::to_string(loopId) + "].x)";
+                Line("if (loopDepth < 4)");
+                Line("{");
+                indent++;
+                Line("const uint loopParams = " + params + ";");
+                if (!repeat)
+                    Line("loopIter[loopDepth] = 0;");
+                Line("loopCount[loopDepth] = int(loopParams & 0xFFu);");
+                Line("loopStart[loopDepth] = int((loopParams >> 8) & 0xFFu);");
+                Line("loopStep[loopDepth] = int(loopParams << 16) >> 24;");
+                Line("loopAt[loopDepth] = " + std::to_string(i) + "u;");
+                Line("aL = loopIter[loopDepth] * loopStep[loopDepth] + loopStart[loopDepth];");
+                Line("if (loopCount[loopDepth] <= 0) { cfpc = " + std::to_string(skipTo) + "u; continue; }");
+                Line("loopDepth++;");
+                indent--;
+                Line("}");
+                Line("cfpc = " + next + ";");
+                Line("continue;");
+                break;
+            }
+            case CfOp::LoopEnd:
+            {
+                // loop_end: the iteration is incremented before the count and predicate checks;
+                // the address is the start of the loop body to go back to.
+                const uint32_t body = cf.lo & 0x1FFF;
+                const bool predicatedBreak = (cf.lo >> 21) & 1;
+                Line("if (loopDepth > 0)");
+                Line("{");
+                indent++;
+                Line("const int depth = loopDepth - 1;");
+                Line("loopIter[depth] = loopIter[depth] + 1;");
+                Line("bool done = loopIter[depth] >= loopCount[depth];");
+                if (predicatedBreak)
+                    Line(std::string("done = done || (p == ") + (cf.condition() ? "true" : "false") + ");");
+                Line("if (!done)");
+                Line("{");
+                indent++;
+                Line("aL = loopIter[depth] * loopStep[depth] + loopStart[depth];");
+                Line("cfpc = " + std::to_string(body) + "u;");
+                Line("continue;");
+                indent--;
+                Line("}");
+                Line("loopDepth = depth;");
+                Line("if (depth > 0) aL = loopIter[depth - 1] * loopStep[depth - 1] + loopStart[depth - 1];");
+                indent--;
+                Line("}");
+                Line("cfpc = " + next + ";");
+                Line("continue;");
+                break;
+            }
+            case CfOp::CondCall:
+            {
+                const uint32_t target = cf.lo & 0x1FFF;
+                std::string cond;
+                if ((cf.lo >> 13) & 1)
+                    cond = "true";
+                else if ((cf.lo >> 14) & 1)
+                    cond = cf.condition() ? "p" : "!p";
+                else
+                    cond = std::string("BoolConstant(") + (pixel ? "pb" : "vb") + ", " + std::to_string((cf.hi >> 2) & 0xFF) + ") == " +
+                        (cf.condition() ? "true" : "false");
+                Line("if (" + cond + " && callDepth < 4)");
+                Line("{");
+                indent++;
+                Line("callRet[callDepth++] = " + next + "u;");
+                Line("cfpc = " + std::to_string(target) + "u;");
+                Line("continue;");
+                indent--;
+                Line("}");
+                Line("cfpc = " + next + ";");
+                Line("continue;");
+                break;
+            }
+            case CfOp::Return:
+                Line("if (callDepth > 0) { cfpc = callRet[--callDepth]; continue; }");
+                Line("cfpc = " + next + ";");
+                Line("continue;");
+                break;
             default:
                 error = std::string("control flow op ") + std::to_string(unsigned(cf.op())) + " not supported yet";
                 return;
