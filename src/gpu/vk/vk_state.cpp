@@ -1,3 +1,4 @@
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_state.h"
 
 #include <cstdio>

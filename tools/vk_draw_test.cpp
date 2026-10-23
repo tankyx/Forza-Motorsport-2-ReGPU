@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_context.h"
 #include "gpu/vk/vk_draw.h"
 #include "gpu/vk/vk_shader.h"

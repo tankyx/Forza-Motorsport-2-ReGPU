@@ -1,3 +1,4 @@
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_context.h"
 
 #include <cstdio>
@@ -17,6 +18,8 @@ bool Fail(const char* what, VkResult result)
 
 bool Init(Context& context, const std::filesystem::path& cacheDir)
 {
+    if (!vkldr::Load())
+        return false;
     VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
     app.pApplicationName = "fm2";
     app.apiVersion = VK_API_VERSION_1_2;
@@ -24,6 +27,8 @@ bool Init(Context& context, const std::filesystem::path& cacheDir)
     ici.pApplicationInfo = &app;
     if (vkCreateInstance(&ici, nullptr, &context.instance) != VK_SUCCESS)
         return Fail("vkCreateInstance", VK_ERROR_INITIALIZATION_FAILED);
+    if (!vkldr::ResolveInstance(context.instance))
+        return Fail("vkGetInstanceProcAddr", VK_ERROR_INITIALIZATION_FAILED);
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(context.instance, &count, nullptr);

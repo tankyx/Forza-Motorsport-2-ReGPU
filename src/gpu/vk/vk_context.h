@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
-#include <vulkan/vulkan.h>
+#include "gpu/vk/vk_loader.h"
 
 namespace vk
 {

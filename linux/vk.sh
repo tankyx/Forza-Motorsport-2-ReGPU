@@ -29,31 +29,31 @@ fi
 
 mkdir -p "$OUT"
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_present_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/tools/vk_present_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
     "$ROOT/src/gpu/vk/vk_blit.cpp" "$ROOT/src/png.cpp" \
-    -lvulkan -o "$OUT/vk_present_test"
+    -ldl -o "$OUT/vk_present_test"
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_shaders_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/tools/vk_shaders_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
     "$ROOT/src/gpu/vk/vk_shaders.cpp" "$ROOT/src/gpu/hlsl.cpp" "$ROOT/src/gpu/ucode.cpp" \
-    "$ROOT/src/live_switch.cpp" "$ROOT/src/log.cpp" -lvulkan -o "$OUT/vk_shaders_test"
+    "$ROOT/src/live_switch.cpp" "$ROOT/src/log.cpp" -ldl -o "$OUT/vk_shaders_test"
 
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_surface_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
-    "$ROOT/src/gpu/vk/vk_surface.cpp" -lvulkan -o "$OUT/vk_surface_test"
+    "$ROOT/tools/vk_surface_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/src/gpu/vk/vk_surface.cpp" -ldl -o "$OUT/vk_surface_test"
 
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_draw_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/tools/vk_draw_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
     "$ROOT/src/gpu/vk/vk_texture.cpp" "$ROOT/src/gpu/vk/vk_state.cpp" "$ROOT/src/gpu/vk/vk_draw.cpp" \
-    -lvulkan -o "$OUT/vk_draw_test"
+    -ldl -o "$OUT/vk_draw_test"
 
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_pipelines_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_state.cpp" \
-    -lvulkan -o "$OUT/vk_pipelines_test"
+    "$ROOT/tools/vk_pipelines_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_state.cpp" \
+    -ldl -o "$OUT/vk_pipelines_test"
 
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
-    "$ROOT/tools/vk_texture_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/tools/vk_texture_test.cpp" "$ROOT/src/gpu/vk/vk_loader.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
     "$ROOT/src/gpu/vk/vk_texture.cpp" \
-    -lvulkan -o "$OUT/vk_texture_test"
+    -ldl -o "$OUT/vk_texture_test"
 
 echo "== running"
 # FM2_SPV_DIR: a directory of SPIR-V modules (vs_*.spv / ps_*.spv) to also build pipelines

@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_context.h"
 #include "gpu/vk/vk_state.h"
 

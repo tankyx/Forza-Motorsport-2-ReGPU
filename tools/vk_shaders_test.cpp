@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "gpu/ucode.h"
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_context.h"
 #include "gpu/vk/vk_shaders.h"
 

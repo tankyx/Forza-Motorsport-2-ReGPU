@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_blit.h"
 #include "gpu/vk/vk_context.h"
 #include "png.h"

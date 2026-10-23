@@ -1,3 +1,4 @@
+#include "gpu/vk/vk_loader.h"
 #include "gpu/vk/vk_shader.h"
 
 #include <cstdio>
@@ -5,7 +6,10 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#define popen _popen
+#define pclose _pclose
+#else
 #include <unistd.h>
 #endif
 
