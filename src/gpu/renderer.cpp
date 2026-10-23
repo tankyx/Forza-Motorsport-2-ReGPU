@@ -52,6 +52,23 @@
 #include "log.h"
 #include "png.h"
 #include "render/presenter.h"
+#if defined(FM2_VULKAN)
+// FM2_RENDERER=vulkan: the same seam, implemented in gpu/vk/renderer_vk.cpp.
+bool VulkanRendererEnabled();
+void RendererVkOnShaderLoad(uint32_t type, const uint32_t* microcodeBE, uint32_t dwords);
+void RendererVkSetShader(uint32_t type, const uint32_t* microcodeBE, uint32_t usedDwords, uint64_t hash);
+void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize);
+void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer);
+#define FM2_VK_IF_ENABLED(call)                                                                                           \
+    if (VulkanRendererEnabled())                                                                                          \
+    {                                                                                                                     \
+        call;                                                                                                             \
+        return;                                                                                                           \
+    }
+#else
+#define FM2_VK_IF_ENABLED(call)
+#endif
+
 #include "gpu/constants.h"
 #include "gpu/indices.h"
 #include "gpu/renderer.h"
@@ -5240,13 +5257,16 @@ void RendererSaveCaches()
 
 void RendererSetShader(uint32_t type, const uint32_t* microcodeBE, uint32_t usedDwords, uint64_t hash)
 {
+    FM2_VK_IF_ENABLED(RendererVkSetShader(type, microcodeBE, usedDwords, hash))
     std::vector<uint32_t>& code = type == 0 ? C().vsCode : C().psCode;
     code.assign(microcodeBE, microcodeBE + usedDwords);
     (type == 0 ? C().vsHash : C().psHash) = hash;
 }
 
+
 void RendererOnShaderLoad(uint32_t type, const uint32_t* microcodeBE, uint32_t dwords)
 {
+    FM2_VK_IF_ENABLED(RendererVkOnShaderLoad(type, microcodeBE, dwords))
     std::vector<uint32_t>& code = type == 0 ? C().vsCode : C().psCode;
     code.assign(microcodeBE, microcodeBE + ucode::UsedDwords(microcodeBE, dwords));
     (type == 0 ? C().vsHash : C().psHash) = Fnv(code.data(), code.size() * 4) ^ type;
@@ -5859,6 +5879,7 @@ void RendererRunPieces(uint32_t n, const std::function<void(uint32_t)>& translat
 
 void RendererOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
 {
+    FM2_VK_IF_ENABLED(RendererVkOnDraw(initiator, dmaBase, dmaSize))
     if (!g_perfTiming)
     {
         DrawImpl(initiator, dmaBase, dmaSize);
@@ -6825,6 +6846,7 @@ void BenchmarkWriteReport(const char* path)
 void RendererOnSwapImpl(uint64_t frameNumber, uint32_t frontBuffer);
 void RendererOnSwap(uint64_t frameNumber, uint32_t frontBuffer)
 {
+    FM2_VK_IF_ENABLED(RendererVkOnSwap(frameNumber, frontBuffer))
     const auto t0 = std::chrono::steady_clock::now();
     RendererOnSwapImpl(frameNumber, frontBuffer);
     const auto now = std::chrono::steady_clock::now();
