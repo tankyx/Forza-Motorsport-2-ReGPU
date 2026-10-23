@@ -21,6 +21,7 @@
 #include "gpu/renderer.h"
 #include "gpu/vk/vk_context.h"
 #include "gpu/vk/vk_draw.h"
+#include "gpu/vk/vk_shader.h"
 #include "gpu/vk/vk_shaders.h"
 #include "gpu/vk/vk_state.h"
 #include "gpu/vk/vk_surface.h"
@@ -72,7 +73,7 @@ struct State
 
 float RegFloat(uint32_t index)
 {
-    const uint32_t word = __builtin_bswap32(gpureg::Get(index));
+    const uint32_t word = gpureg::Get(index);
     float f;
     memcpy(&f, &word, 4);
     return f;
@@ -402,7 +403,8 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         return;
     }
 
-    const vk::StateKey key = MakeKey(g.vsHash, g.psHash, (initiator & 0x3F) == 4);
+    static const bool noCull = getenv("FM2_VK_NOCULL") != nullptr;
+    const vk::StateKey key = MakeKey(g.vsHash, g.psHash, !noCull && (initiator & 0x3F) == 4);
     VkPipeline pipeline = PipelineFor(key, vs, ps, *surface);
     if (!pipeline)
     {
@@ -429,6 +431,25 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         vk::SurfaceBegin(g.context, *surface, g.cmd, &clear);
         g.passOpen = true;
         g.openSurface = surface;
+    }
+    // One-shot look at one draw: what the vertices and the fetch table actually say.
+    static uint32_t seen = 0;
+    static bool dumped = false;
+    if (seen++ == (getenv("FM2_VK_SAMPLE") ? uint32_t(atoi(getenv("FM2_VK_SAMPLE"))) : 0u) && !dumped)
+    {
+        dumped = true;
+        Log("renderer_vk: first draw: initiator %08x prim %u count %u, %zu vertices", initiator, initiator & 0x3F,
+            initiator >> 16, list.size());
+        Log("renderer_vk:   indices %u %u %u %u %u %u", list[0], list.size() > 1 ? list[1] : 0, list.size() > 2 ? list[2] : 0,
+            list.size() > 3 ? list[3] : 0, list.size() > 4 ? list[4] : 0, list.size() > 5 ? list[5] : 0);
+        for (uint32_t k : vs->vertexFetchConstants)
+            Log("renderer_vk:   vf%u: offset %08X endian %u source %u", k, vc.vf[k][0], vc.vf[k][1], vc.vf[k][2]);
+        Log("renderer_vk:   vfl0 %08x %08x %08x %08x", vc.vfl[0][0], vc.vfl[0][1], vc.vfl[0][2], vc.vfl[0][3]);
+        Log("renderer_vk:   info %08x %08x %08x %08x, vte %08x, scale %g %g %g, offset %g %g %g, point %g %g", vc.info[1], vc.info[2],
+            vc.info[3], vc.info[0], vc.vte[0], vc.vscale[0], vc.vscale[1], vc.vscale[2], vc.voffset[0], vc.voffset[1],
+            vc.voffset[2], vc.point[0], vc.point[1]);
+        Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
+            (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
     }
     if (!vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures.set, vc, pc, list.data(), uint32_t(list.size())))
     {
