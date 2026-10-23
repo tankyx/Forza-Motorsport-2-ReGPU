@@ -948,7 +948,38 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
 
     gpu::VSConstants vc{};
     gpu::PSConstants pc{};
+    // FM2_VK_TRACE_TEX_DRAWS=<n>: the first n texture-sampling draws of the traced
+    // frame, with each slot's fetch address, format and the bindless index it got.
+    static const uint32_t traceDrawsTex = getenv("FM2_VK_TRACE_TEX_DRAWS") ? uint32_t(atoi(getenv("FM2_VK_TRACE_TEX_DRAWS"))) : 0;
+    static uint32_t tracedDrawsTex = 0;
     BuildConstants(vs, ps, vc, pc);
+    if (traceDrawsTex && tracedDrawsTex < traceDrawsTex && ps->usedTextureSlots && g.frame >= 600)
+    {
+        tracedDrawsTex++;
+        const ScissorRect clip = WindowScissor();
+        Log("drawtex_vk: frame %llu prim %u, %zu vertices, scissor %d,%d..%d,%d, vs %016llx ps %016llx",
+            (unsigned long long)g.frame, initiator & 0x3F, list.size(), clip.left, clip.top, clip.right, clip.bottom,
+            (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
+        for (uint32_t slot = 0; slot < 32; slot++)
+            if ((ps->usedTextureSlots | vs->usedTextureSlots) & (1u << slot))
+            {
+                const TextureFetch f = ReadTextureFetch(slot);
+                uint32_t index = 0;
+                memcpy(&index, &pc.tbias[slot][1], 4);
+                std::vector<uint8_t> rgba;
+                const bool decoded = DecodeTexture(f, rgba);
+                Log("drawtex_vk:   slot %u: fetch %08x format %u (%s) %ux%u pitch %u tiled %d swizzle %03X -> index %u, dim %u%s",
+                    slot, f.Address(), f.Format(), TextureFormatName(f.Format()), f.Width(), f.Height(), f.Pitch(), int(f.Tiled()),
+                    f.Swizzle(), index, pc.tinfo[slot][3], decoded ? "" : " (decode failed)");
+                if (decoded)
+                {
+                    const size_t w = f.Width(), h = f.Height();
+                    for (size_t y : { size_t(0), h / 2, h - 1 })
+                        Log("drawtex_vk:     (%zu,%zu) = %u %u %u %u", size_t(0), y, rgba[(y * w) * 4], rgba[(y * w) * 4 + 1],
+                            rgba[(y * w) * 4 + 2], rgba[(y * w) * 4 + 3]);
+                }
+            }
+    }
 
     if (g.openSurface != surface)
     {
