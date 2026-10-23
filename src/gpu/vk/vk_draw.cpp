@@ -3,6 +3,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+
+#include "memory.h"
+
 #include <cstring>
 
 namespace vk
@@ -129,6 +133,30 @@ bool DrawList(const Context& context, DrawContext& draw, VkCommandBuffer cmd, Vk
         memcpy(draw.guestMemory.cpu + listOffset, list, size_t(count) * 4);
     draw.guestMemory.used = listOffset + VkDeviceSize(count) * 4;
     vs.info[0] = uint32_t(listOffset); // where the vertex shader finds the list
+
+    // Small guest vertex buffers are copied into the ring here rather than read in place. This path
+    // records a whole frame and submits at swap, so a buffer the guest rewrites after the draw is
+    // recorded would otherwise be read at its new contents — the D3D12 path copies below its
+    // 16 KB direct-fetch threshold for exactly this reason. Wrong texture coordinates on stable
+    // geometry is what that looks like.
+    static const bool copyFetch = getenv("FM2_VK_NO_VERTEX_COPY") == nullptr;
+    const uint32_t kDirectFetchBytes = copyFetch ? 16 * 1024 : 0;
+    for (uint32_t k = 0; k < 32; k++)
+    {
+        const uint32_t fetchBase = vs.vf[k][0], fetchSize = vs.vf[k][1];
+        if (fetchSize == 0 || vs.vf[k][2] == 0)
+            continue;
+        const uint32_t bytes = (fetchSize & 0xFFFFFF) * 4;
+        if (bytes >= kDirectFetchBytes)
+            continue;
+        const VkDeviceSize offset = Align(draw.guestMemory.used, alignment);
+        if (offset + bytes > draw.guestMemory.size)
+            break;
+        memcpy(draw.guestMemory.cpu + offset, GuestPtr<const void>(0xA0000000 + (fetchBase & 0x1FFFFFFF)), bytes);
+        vs.vf[k][0] = uint32_t(offset);
+        vs.vf[k][2] = 0; // read this one out of the ring
+        draw.guestMemory.used = offset + bytes;
+    }
 
     const VkDeviceSize vsOffset = Align(draw.constants.used, alignment);
     const VkDeviceSize psOffset = Align(vsOffset + sizeof(gpu::VSConstants), alignment);
