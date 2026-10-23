@@ -983,6 +983,11 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
                     f.Swizzle(), index, pc.tinfo[slot][3], decoded ? "" : " (decode failed)");
                 if (decoded)
                 {
+                    // Write the texture out: a clean gradient means the decode is right and the
+                    // fault is in how it is sampled; a striped one puts it in the decoder.
+                    char path[96];
+                    snprintf(path, sizeof(path), "out/tex_%08x.png", f.Address());
+                    WritePng(path, f.Width(), f.Height(), rgba);
                     const size_t w = f.Width(), h = f.Height();
                     for (size_t y : { size_t(0), h / 2, h - 1 })
                         Log("drawtex_vk:     (%zu,%zu) = %u %u %u %u", size_t(0), y, rgba[(y * w) * 4], rgba[(y * w) * 4 + 1],
