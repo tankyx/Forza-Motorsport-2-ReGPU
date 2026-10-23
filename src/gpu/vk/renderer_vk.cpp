@@ -326,6 +326,10 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
     if (fetch.Type() != 2 || fetch.Dimension() == 3 || !TextureFormatSupported(fetch.Format()))
     {
         g.texFailed++;
+        static std::unordered_map<uint32_t, uint32_t> byFormat;
+        if (byFormat[fetch.Format()]++ < 3)
+            Log("texture_vk: refused format %u (%s) type %u dimension %u", fetch.Format(), TextureFormatName(fetch.Format()), fetch.Type(),
+                fetch.Dimension());
         return;
     }
     // Cache first: decoding is milliseconds (tiling, format conversion) and a draw samples the
