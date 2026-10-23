@@ -985,6 +985,12 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
             Log("drawtex_vk:   slot %u: fetch %08x format %u (%s) %ux%u pitch %u tiled %d swizzle %03X -> index %u, dim %u%s",
                     slot, f.Address(), f.Format(), TextureFormatName(f.Format()), f.Width(), f.Height(), f.Pitch(), int(f.Tiled()),
                     f.Swizzle(), index, pc.tinfo[slot][3], decoded ? "" : " (decode failed)");
+                // The sampler mode is what a wrong-wrap bug shows up as: 0 bilinear repeat, 1
+                // bilinear clamp, 2 point clamp, 3 point repeat. The raw clamp fields next to it say
+                // whether the guest asked for clamp or the derivation dropped it.
+                Log("drawtex_vk:     mode %u (clampX %u clampY %u point %u, raw d0 %08x d3 %08x)",
+                    pc.tinfo[slot][0], (f.dwords[0] >> 10) & 7, (f.dwords[0] >> 13) & 7, (f.dwords[3] >> 19) & 3,
+                    f.dwords[0], f.dwords[3]);
                 if (decoded)
                 {
                     // Write the texture out: a clean gradient means the decode is right and the
