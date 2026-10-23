@@ -63,6 +63,7 @@ PFN_vkDestroySampler vkDestroySampler = nullptr;
 PFN_vkDestroyShaderModule vkDestroyShaderModule = nullptr;
 PFN_vkDeviceWaitIdle vkDeviceWaitIdle = nullptr;
 PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices = nullptr;
+PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties = nullptr;
 PFN_vkFreeDescriptorSets vkFreeDescriptorSets = nullptr;
 PFN_vkFreeMemory vkFreeMemory = nullptr;
 PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements = nullptr;
@@ -73,6 +74,7 @@ PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties = nu
 PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties = nullptr;
 PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties = nullptr;
 PFN_vkGetPipelineCacheData vkGetPipelineCacheData = nullptr;
+PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT = nullptr;
 PFN_vkMapMemory vkMapMemory = nullptr;
 PFN_vkUnmapMemory vkUnmapMemory = nullptr;
 PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
@@ -301,6 +303,10 @@ bool ResolveInstance(VkInstance instance)
     vkEnumeratePhysicalDevices = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(GetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"));
     if (!vkEnumeratePhysicalDevices)
         missing++;
+    vkEnumerateDeviceExtensionProperties =
+        reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(GetInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
+    if (!vkEnumerateDeviceExtensionProperties)
+        missing++;
     vkFreeDescriptorSets = reinterpret_cast<PFN_vkFreeDescriptorSets>(GetInstanceProcAddr(instance, "vkFreeDescriptorSets"));
     if (!vkFreeDescriptorSets)
         missing++;
@@ -331,6 +337,8 @@ bool ResolveInstance(VkInstance instance)
     vkGetPipelineCacheData = reinterpret_cast<PFN_vkGetPipelineCacheData>(GetInstanceProcAddr(instance, "vkGetPipelineCacheData"));
     if (!vkGetPipelineCacheData)
         missing++;
+    vkGetMemoryHostPointerPropertiesEXT =
+        reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(GetInstanceProcAddr(instance, "vkGetMemoryHostPointerPropertiesEXT"));
     vkMapMemory = reinterpret_cast<PFN_vkMapMemory>(GetInstanceProcAddr(instance, "vkMapMemory"));
     if (!vkMapMemory)
         missing++;

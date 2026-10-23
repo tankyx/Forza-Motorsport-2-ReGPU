@@ -26,6 +26,10 @@ struct Context
     std::filesystem::path pipelineCachePath;
     // Descriptor indexing: the shaders index their texture arrays with runtime values.
     bool descriptorIndexing = false;
+    // VK_EXT_external_memory_host: the guest's own memory becomes a storage buffer, so the
+    // shaders read vertex and index data where the game wrote it (the D3D12 path opens the same
+    // memory as a heap).
+    bool externalMemoryHost = false;
 };
 
 bool Init(Context& context, const std::filesystem::path& cacheDir = {});
@@ -35,6 +39,10 @@ uint32_t FindMemory(const Context& context, uint32_t bits, VkMemoryPropertyFlags
 
 // Host-visible, coherent buffer. mapped is kept valid for the buffer's lifetime.
 VkBuffer CreateBuffer(const Context& context, VkDeviceSize size, VkBufferUsageFlags usage, void** mapped);
+
+// Wraps a page-aligned host allocation as a storage buffer without copying it. Returns
+// VK_NULL_HANDLE when the device lacks VK_EXT_external_memory_host.
+VkBuffer CreateHostImportedBuffer(const Context& context, void* host, VkDeviceSize size);
 
 // The pipeline layout the game's translated shaders expect: two constant buffers, guest
 // memory as storage buffers, four samplers, and one bindless array each for 2D and cube

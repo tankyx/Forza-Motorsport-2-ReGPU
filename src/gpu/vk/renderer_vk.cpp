@@ -11,7 +11,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <unordered_map>
+#include <vector>
 
 #include "gpu/constants.h"
 #include "gpu/indices.h"
@@ -23,6 +25,9 @@
 #include "gpu/vk/vk_state.h"
 #include "gpu/vk/vk_surface.h"
 #include "gpu/vk/vk_texture.h"
+#include "memory.h"
+#include "png.h"
+#include "render/presenter.h"
 #include "log.h"
 
 namespace
@@ -55,6 +60,7 @@ struct State
     uint64_t frame = 0;
     bool reportedDraws = false;
     uint32_t surfacesSeen = 0;
+    uint32_t skippedShader = 0, skippedSurface = 0, skippedIndex = 0, skippedPipeline = 0, skippedDraw = 0;
 
     // The frame: one command buffer, one render pass per surface (the D3D12 path does the same
     // — the guest's tile replays become one pass), submitted when the guest swaps.
@@ -101,6 +107,61 @@ VkPipeline PipelineFor(const vk::StateKey& key, const vk::VkShader* vs, const vk
 }
 
 // Closes the pass the current surface has open, if any.
+// Writes a surface out as a PNG (out/vk_frame.png): the first thing to look at when the draw
+// path is being brought up.
+void DumpSurface(vk::Surface& surface)
+{
+    const VkDeviceSize bytes = VkDeviceSize(surface.width) * surface.height * 8; // RGBA16F
+    void* readback = nullptr;
+    VkBuffer copy = vk::CreateBuffer(g.context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &readback);
+    if (!copy)
+        return;
+    // Resolve through the path the surface test verified (it handles the layouts), then read.
+    vk::Image resolved = vk::CreateImage(g.context, surface.width, surface.height, VK_FORMAT_R16G16B16A16_SFLOAT,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    const bool ok = resolved.image && vk::Submit(g.context, [&](VkCommandBuffer cmd) {
+        vk::SurfaceResolve(g.context, surface, cmd, resolved.image, surface.width, surface.height);
+        VkBufferImageCopy region{};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent = { surface.width, surface.height, 1 };
+        vkCmdCopyImageToBuffer(cmd, resolved.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy, 1, &region);
+    });
+    if (ok)
+    {
+        auto half = [](uint16_t h) {
+            const uint32_t sign = uint32_t(h & 0x8000u) << 16;
+            uint32_t exp = (h >> 10) & 0x1F, man = h & 0x3FF, bits = 0;
+            if (exp == 0)
+                bits = sign;
+            else if (exp == 31)
+                bits = sign | 0x7F800000u | (man << 13);
+            else
+                bits = sign | ((exp + 127 - 15) << 23) | (man << 13);
+            float f;
+            memcpy(&f, &bits, 4);
+            return f;
+        };
+        const uint16_t* src = static_cast<const uint16_t*>(readback);
+        std::vector<uint8_t> rgba(size_t(surface.width) * surface.height * 4);
+        size_t lit = 0;
+        for (size_t i = 0; i < size_t(surface.width) * surface.height; i++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                const float v = std::min(1.0f, std::max(0.0f, half(src[i * 4 + c])));
+                rgba[i * 4 + c] = uint8_t(v * 255.0f);
+                lit += v > 0.02f;
+            }
+            rgba[i * 4 + 3] = 255;
+        }
+        WritePng("out/vk_frame.png", surface.width, surface.height, rgba);
+        Log("renderer_vk: wrote out/vk_frame.png (%ux%u, %zu lit components)", surface.width, surface.height, lit);
+    }
+    vkDeviceWaitIdle(g.context.device);
+    vk::DestroyImage(g.context, resolved);
+    vkDestroyBuffer(g.context.device, copy, nullptr);
+}
+
 void ClosePass()
 {
     if (!g.passOpen)
@@ -221,7 +282,12 @@ bool Init()
         g.failed = true;
         return false;
     }
-    if (!vk::DrawInit(g.context, g.draw, VK_NULL_HANDLE, g.samplers, g.textures.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
+    // The guest's physical memory window, wrapped rather than copied: the vertex shaders read
+    // vertex data straight out of it (gpu/memory.h maps the guest's 4 GB at g_base).
+    g.gphys = vk::CreateHostImportedBuffer(g.context, GuestPtr<uint8_t>(0xA0000000), 0x20000000);
+    if (!g.gphys)
+        Log("renderer_vk: guest memory is not importable; vertex data will read as zero");
+    if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
     {
         Log("renderer_vk: draw context failed");
         g.failed = true;
@@ -245,12 +311,15 @@ void EndFrame()
 {
     if (!g.cmd)
         return;
-    vkEndCommandBuffer(g.cmd);
+    const VkResult ended = vkEndCommandBuffer(g.cmd);
     VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &g.cmd;
-    if (vkQueueSubmit(g.context.queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS)
-        vkQueueWaitIdle(g.context.queue);
+    const VkResult submitted = ended == VK_SUCCESS ? vkQueueSubmit(g.context.queue, 1, &submit, VK_NULL_HANDLE) : ended;
+    const VkResult waited = submitted == VK_SUCCESS ? vkQueueWaitIdle(g.context.queue) : submitted;
+    static int reported = 0;
+    if ((submitted != VK_SUCCESS || waited != VK_SUCCESS) && reported++ < 3)
+        Log("renderer_vk: frame submit end %d, submit %d, wait %d", int(ended), int(submitted), int(waited));
     vkResetCommandBuffer(g.cmd, 0);
     VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     vkBeginCommandBuffer(g.cmd, &beginInfo);
@@ -292,7 +361,12 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     const vk::VkShader* vs = vk::ShaderGet(g.context, g.shaders, g.vsHash, g.vsCode.data(), uint32_t(g.vsCode.size()), false);
     const vk::VkShader* ps = vk::ShaderGet(g.context, g.shaders, g.psHash, g.psCode.data(), uint32_t(g.psCode.size()), true);
     if (!vs || !vs->ok || !ps || !ps->ok)
+    {
+        if (g.skippedShader++ < 4)
+            Log("renderer_vk: shader not ready (vs %d/%s, ps %d/%s)", vs ? int(vs->ok) : -1, vs ? vs->error.c_str() : "?",
+                ps ? int(ps->ok) : -1, ps ? ps->error.c_str() : "?");
         return;
+    }
     if (!drawEnabled)
     {
         if (!g.reportedDraws)
@@ -304,23 +378,39 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         return;
     }
 
-    // The surface the guest renders into: EDRAM base from RB_COLOR_INFO, size from RB_SURFACE_INFO.
+    // The surface the guest renders into: EDRAM base from RB_COLOR_INFO, sized like the D3D12
+    // path sizes its surfaces — the render resolution from the settings, not the register's
+    // pitch/height fields (those describe the tiled pass, not the host target).
     const uint32_t base = gpureg::Get(0x2001) & 0xFFF;
-    const uint32_t width = gpureg::Get(0x2000) & 0x3FFF, height = (gpureg::Get(0x2000) >> 16) & 0x3FFF;
-    vk::Surface* surface = vk::SurfaceAcquire(g.context, g.surfaces, base, width ? width : 1280, height ? height : 720,
-        VK_SAMPLE_COUNT_1_BIT);
+    uint32_t width = 0, height = 0;
+    RenderSize(width, height);
+    vk::Surface* surface = vk::SurfaceAcquire(g.context, g.surfaces, base, width, height, VK_SAMPLE_COUNT_1_BIT);
     if (!surface)
+    {
+        if (g.skippedSurface++ < 4)
+            Log("renderer_vk: no surface for base %u (%ux%u)", base, width, height);
         return;
+    }
 
     // Expanded index list: the vertex shader fetches it out of guest memory.
     std::vector<uint32_t> list;
     if (!gpu::BuildIndexList(initiator, dmaBase, dmaSize, list) || list.empty())
+    {
+        if (g.skippedIndex++ < 4)
+            Log("renderer_vk: no index list (initiator %08x prim %u source %u count %u dma %08x/%08x, %zu entries)",
+                initiator, initiator & 0x3F, (initiator >> 6) & 3, initiator >> 16, dmaBase, dmaSize, list.size());
         return;
+    }
 
     const vk::StateKey key = MakeKey(g.vsHash, g.psHash, (initiator & 0x3F) == 4);
     VkPipeline pipeline = PipelineFor(key, vs, ps, *surface);
     if (!pipeline)
+    {
+        if (g.skippedPipeline++ < 4)
+            Log("renderer_vk: no pipeline (blend %08x depth %08x mask %08x flags %u)", key.blend, key.depth, key.stencilMaskMode,
+                key.flags);
         return;
+    }
 
     gpu::VSConstants vc{};
     gpu::PSConstants pc{};
@@ -330,13 +420,22 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     {
         ClosePass();
         // A surface starts cleared; the guest's predicated tile replays are the same pass.
+        // Not black, so a cleared frame can be told apart from one that never ran.
         VkClearColorValue clear{};
+        clear.float32[0] = 0.05f;
+        clear.float32[1] = 0.10f;
+        clear.float32[2] = 0.25f;
         clear.float32[3] = 1.0f;
         vk::SurfaceBegin(g.context, *surface, g.cmd, &clear);
         g.passOpen = true;
         g.openSurface = surface;
     }
-    vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures.set, vc, pc, list.data(), uint32_t(list.size()));
+    if (!vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures.set, vc, pc, list.data(), uint32_t(list.size())))
+    {
+        if (g.skippedDraw++ < 4)
+            Log("renderer_vk: DrawList refused (%zu vertices)", list.size());
+        return;
+    }
     g.drawsThisFrame++;
 }
 
@@ -345,14 +444,18 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
     (void)frontBuffer;
     if (!Init())
         return;
+    const uint32_t draws = g.drawsThisFrame;
+    vk::Surface* last = g.openSurface;
     ClosePass();
     // Submit the frame and start the next one. The command buffer is reused: waiting keeps it
     // simple, and the first frames are not where the time goes.
     EndFrame();
+    if (last && draws && frame % 100 == 0)
+        DumpSurface(*last);
     g.frame = frame;
     g.drawsThisFrame = 0;
     vk::DrawBeginFrame(g.draw);
     if (frame % 60 == 0)
-        Log("renderer_vk: frame %llu, %u draws, %u shaders compiled, %zu surfaces", (unsigned long long)frame,
-            g.drawsThisFrame, g.shaders.compiled, g.surfaces.surfaces.size());
+        Log("renderer_vk: frame %llu, %u draws, %u shaders compiled, %zu surfaces, %u pipelines",
+            (unsigned long long)frame, draws, g.shaders.compiled, g.surfaces.surfaces.size(), unsigned(g.pipelines.size()));
 }

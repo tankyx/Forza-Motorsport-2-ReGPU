@@ -63,6 +63,19 @@ bool Init(Context& context, const std::filesystem::path& cacheDir)
     if (context.queueFamily == familyCount)
         return Fail("no graphics queue", VK_ERROR_INITIALIZATION_FAILED);
 
+    // Device extensions, if the driver offers them.
+    uint32_t extensionCount = 0;
+    vkEnumerateDeviceExtensionProperties(context.physical, nullptr, &extensionCount, nullptr);
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(context.physical, nullptr, &extensionCount, extensions.data());
+    std::vector<const char*> deviceExtensions;
+    for (const auto& extension : extensions)
+        if (!strcmp(extension.extensionName, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME))
+        {
+            context.externalMemoryHost = true;
+            deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+        }
+
     float priority = 1.0f;
     VkDeviceQueueCreateInfo qci{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
     qci.queueFamilyIndex = context.queueFamily;
@@ -75,6 +88,8 @@ bool Init(Context& context, const std::filesystem::path& cacheDir)
     dci.pNext = &features;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
+    dci.enabledExtensionCount = uint32_t(deviceExtensions.size());
+    dci.ppEnabledExtensionNames = deviceExtensions.data();
     if (vkCreateDevice(context.physical, &dci, nullptr, &context.device) != VK_SUCCESS)
         return Fail("vkCreateDevice", VK_ERROR_INITIALIZATION_FAILED);
     vkGetDeviceQueue(context.device, context.queueFamily, 0, &context.queue);
@@ -198,6 +213,47 @@ bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout, VkDe
     else
         vkDestroyDescriptorSetLayout(context.device, set0, nullptr);
     return ok;
+}
+
+uint32_t FindMemory(const Context& context, uint32_t bits, VkMemoryPropertyFlags want);
+
+VkBuffer CreateHostImportedBuffer(const Context& context, void* host, VkDeviceSize size)
+{
+    if (!context.externalMemoryHost || !vkGetMemoryHostPointerPropertiesEXT)
+        return VK_NULL_HANDLE;
+    VkMemoryHostPointerPropertiesEXT hostProperties{ VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT };
+    if (vkGetMemoryHostPointerPropertiesEXT(context.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &hostProperties) !=
+        VK_SUCCESS)
+    {
+        fprintf(stderr, "vk: the driver refused the host pointer %p\n", host);
+        return VK_NULL_HANDLE;
+    }
+    VkBufferCreateInfo bi{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bi.size = size;
+    bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vkCreateBuffer(context.device, &bi, nullptr, &buffer) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(context.device, buffer, &req);
+    VkImportMemoryHostPointerInfoEXT import{ VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT };
+    import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+    import.pHostPointer = host;
+    VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    ai.pNext = &import;
+    ai.allocationSize = req.size;
+    const uint32_t compatible = hostProperties.memoryTypeBits & req.memoryTypeBits;
+    ai.memoryTypeIndex = FindMemory(context, compatible ? compatible : req.memoryTypeBits, 0);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (ai.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(context.device, &ai, nullptr, &memory) != VK_SUCCESS ||
+        vkBindBufferMemory(context.device, buffer, memory, 0) != VK_SUCCESS)
+    {
+        fprintf(stderr, "vk: cannot import the host pointer %p as a buffer\n", host);
+        vkDestroyBuffer(context.device, buffer, nullptr);
+        return VK_NULL_HANDLE;
+    }
+    return buffer;
 }
 
 uint32_t FindMemory(const Context& context, uint32_t bits, VkMemoryPropertyFlags want)

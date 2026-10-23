@@ -70,6 +70,7 @@ extern PFN_vkDestroySampler vkDestroySampler;
 extern PFN_vkDestroyShaderModule vkDestroyShaderModule;
 extern PFN_vkDeviceWaitIdle vkDeviceWaitIdle;
 extern PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices;
+extern PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties;
 extern PFN_vkFreeDescriptorSets vkFreeDescriptorSets;
 extern PFN_vkFreeMemory vkFreeMemory;
 extern PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements;
@@ -80,6 +81,7 @@ extern PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperti
 extern PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties;
 extern PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties;
 extern PFN_vkGetPipelineCacheData vkGetPipelineCacheData;
+extern PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT;
 extern PFN_vkMapMemory vkMapMemory;
 extern PFN_vkUnmapMemory vkUnmapMemory;
 extern PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
@@ -144,6 +146,7 @@ extern PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
 #define vkDestroyShaderModule vkldr::vkDestroyShaderModule
 #define vkDeviceWaitIdle vkldr::vkDeviceWaitIdle
 #define vkEnumeratePhysicalDevices vkldr::vkEnumeratePhysicalDevices
+#define vkEnumerateDeviceExtensionProperties vkldr::vkEnumerateDeviceExtensionProperties
 #define vkFreeDescriptorSets vkldr::vkFreeDescriptorSets
 #define vkFreeMemory vkldr::vkFreeMemory
 #define vkGetBufferMemoryRequirements vkldr::vkGetBufferMemoryRequirements
@@ -154,6 +157,7 @@ extern PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
 #define vkGetPhysicalDeviceProperties vkldr::vkGetPhysicalDeviceProperties
 #define vkGetPhysicalDeviceQueueFamilyProperties vkldr::vkGetPhysicalDeviceQueueFamilyProperties
 #define vkGetPipelineCacheData vkldr::vkGetPipelineCacheData
+#define vkGetMemoryHostPointerPropertiesEXT vkldr::vkGetMemoryHostPointerPropertiesEXT
 #define vkMapMemory vkldr::vkMapMemory
 #define vkUnmapMemory vkldr::vkUnmapMemory
 #define vkUpdateDescriptorSets vkldr::vkUpdateDescriptorSets
