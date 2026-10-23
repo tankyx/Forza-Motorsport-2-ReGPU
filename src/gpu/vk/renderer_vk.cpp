@@ -976,7 +976,9 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     // draw being investigated whatever the frame timing does (the sky is a62c809452fcc71b).
     static const uint64_t tracePs = getenv("FM2_VK_TRACE_PS") ? strtoull(getenv("FM2_VK_TRACE_PS"), nullptr, 16) : 0;
     const bool psMatch = !tracePs || g.psHash == tracePs;
-    if (traceDrawsTex && tracedDrawsTex < traceDrawsTex && ps->usedTextureSlots && psMatch)
+    // FM2_VK_TRACE_MIN_FRAME: the same shader draws early composite frames too; trace the late ones.
+    static const uint64_t traceMinFrame = getenv("FM2_VK_TRACE_MIN_FRAME") ? strtoull(getenv("FM2_VK_TRACE_MIN_FRAME"), nullptr, 10) : 0;
+    if (traceDrawsTex && tracedDrawsTex < traceDrawsTex && ps->usedTextureSlots && psMatch && g.frame >= traceMinFrame)
     {
         tracedDrawsTex++;
         const ScissorRect clip = WindowScissor();
