@@ -560,8 +560,10 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     RenderSize(targetWidth, targetHeight);
     vc.info[2] = targetWidth;
     vc.info[3] = targetHeight;
-    // FM2_VK_HALF_TARGET=1: the guest may author its screen-space draws against half the host
-    // target (the 360's EDRAM view); this says so without guessing.
+    // Screen-space draws carry guest pixels, not host ones: the trace below shows a rectangle
+    // whose corner sits at 639.5 in a 1280-wide target, so the guest's own target is half the
+    // host's. Dividing those by the guest size is the fix, but doing it unconditionally left the
+    // frame empty, so it stays behind a switch until the condition is pinned down.
     static const bool halfTarget = getenv("FM2_VK_HALF_TARGET") != nullptr;
     if (halfTarget)
     {
@@ -869,6 +871,36 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
             vc.info[1], vc.info[2], vc.info[3]);
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
+    }
+    // FM2_VK_TRACE_DRAW=<frame>: on the first draw of that frame, print the vertex data the
+    // shader will fetch, so the guest's own coordinates can be read instead of inferred.
+    {
+        static const uint64_t traceFrame = getenv("FM2_VK_TRACE_DRAW") ? strtoull(getenv("FM2_VK_TRACE_DRAW"), nullptr, 10) : 0;
+        static bool traced = false;
+        if (traceFrame && !traced && g.frame >= traceFrame)
+        {
+            traced = true;
+            Log("trace_vk: frame %llu draw prim %u, %zu vertices, vte %08x, target %u %u, scale %g %g offset %g %g",
+                (unsigned long long)g.frame, initiator & 0x3F, list.size(), vc.vte[0], vc.info[2], vc.info[3], vc.vscale[0],
+                vc.vscale[1], vc.voffset[0], vc.voffset[1]);
+            for (size_t i = 0; i < std::min<size_t>(list.size(), 6); i++)
+                Log("trace_vk:   list[%zu] = %08x", i, list[i]);
+            for (uint32_t k : vs->vertexFetchConstants)
+            {
+                const uint8_t* source = GuestPtr<uint8_t>(0xA0000000 + (vc.vf[k][0] & 0x1FFFFFFF));
+                Log("trace_vk:   vf%u offset %08x endian %u source %u, vfl %08x %08x %08x %08x", k, vc.vf[k][0], vc.vf[k][1],
+                    vc.vf[k][2], vc.vfl[k][0], vc.vfl[k][1], vc.vfl[k][2], vc.vfl[k][3]);
+                for (int d = 0; d < 8; d++)
+                {
+                    uint32_t word = 0;
+                    memcpy(&word, source + d * 4, 4);
+                    const uint32_t be = __builtin_bswap32(word);
+                    float f;
+                    memcpy(&f, &be, 4);
+                    Log("trace_vk:     +%d: %08x (as float %g)", d * 4, be, f);
+                }
+            }
+        }
     }
     {
         // FM2_VK_LOG_DRAWS=<n>: the first n draws of a frame, with what places them.
