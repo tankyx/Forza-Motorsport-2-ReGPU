@@ -143,10 +143,9 @@ void SurfaceBegin(Context& context, Surface& surface, VkCommandBuffer cmd, const
     begin.clearValueCount = 2;
     begin.pClearValues = values;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    // Vulkan's framebuffer y axis points down, the guest's clip space (like Direct3D's) points
-    // up: the viewport is flipped so the translated shaders need no change, and the front face
-    // keeps the winding the guest gave it.
-    VkViewport viewport{ 0, float(surface.height), float(surface.width), -float(surface.height), 0, 1 };
+    // The translated vertex shaders already emit y-down NDC (hlsl.cpp: 1 - p.y / size.y * 2),
+    // so the viewport is not flipped: Vulkan and this clip space agree.
+    VkViewport viewport{ 0, 0, float(surface.width), float(surface.height), 0, 1 };
     VkRect2D scissor{ { 0, 0 }, { surface.width, surface.height } };
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);

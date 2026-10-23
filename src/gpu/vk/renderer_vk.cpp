@@ -667,6 +667,9 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         Log("renderer_vk:   info %08x %08x %08x %08x, vte %08x, scale %g %g %g, offset %g %g %g, point %g %g", vc.info[1], vc.info[2],
             vc.info[3], vc.info[0], vc.vte[0], vc.vscale[0], vc.vscale[1], vc.vscale[2], vc.voffset[0], vc.voffset[1],
             vc.voffset[2], vc.point[0], vc.point[1]);
+        Log("renderer_vk:   vscale %g %g %g offset %g %g %g, target %u %u, vinfo %08x %08x %08x %08x", vc.vscale[0],
+            vc.vscale[1], vc.vscale[2], vc.voffset[0], vc.voffset[1], vc.voffset[2], vc.info[2], vc.info[3], vc.info[0],
+            vc.info[1], vc.info[2], vc.info[3]);
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
     }
