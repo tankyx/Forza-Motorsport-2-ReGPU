@@ -546,6 +546,29 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
         g.texBound++;
         return;
     }
+    // A format the decoder refuses: write its bytes out so the layout can be worked out offline
+    // instead of by guessing at the enum.
+    if (fetch.Type() == 2 && fetch.Dimension() != 3 && !TextureFormatSupported(fetch.Format()))
+    {
+        static std::unordered_map<uint32_t, uint32_t> dumped;
+        if (dumped[fetch.Format()]++ < 2)
+        {
+            // The size helper needs the format info we are missing, so assume the widest element:
+            // 4 bytes per texel for an uncompressed guess is a safe upper bound to read back.
+            size_t bytes = TextureSourceSize(fetch);
+            if (!bytes)
+                bytes = size_t(fetch.Width()) * fetch.Height() * 4;
+            bytes = std::min<size_t>(bytes, 4u << 20);
+            char path[96];
+            snprintf(path, sizeof(path), "out/raw_fmt%u_%ux%u.bin", fetch.Format(), fetch.Width(), fetch.Height());
+            if (FILE* f = fopen(path, "wb"))
+            {
+                fwrite(GuestPtr<const void>(GpuPhysToGuest(fetch.Address())), 1, bytes, f);
+                fclose(f);
+            }
+            Log("texture_vk: dumped %s (%zu bytes, %ux%u format %u)", path, bytes, fetch.Width(), fetch.Height(), fetch.Format());
+        }
+    }
     if (fetch.Type() != 2 || fetch.Dimension() == 3 || !TextureFormatSupported(fetch.Format()))
     {
         g.texFailed++;
