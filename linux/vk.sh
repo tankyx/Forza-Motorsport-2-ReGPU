@@ -33,6 +33,11 @@ g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
     "$ROOT/src/gpu/vk/vk_blit.cpp" "$ROOT/src/png.cpp" \
     -lvulkan -o "$OUT/vk_present_test"
 g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
+    "$ROOT/tools/vk_shaders_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
+    "$ROOT/src/gpu/vk/vk_shaders.cpp" "$ROOT/src/gpu/hlsl.cpp" "$ROOT/src/gpu/ucode.cpp" \
+    "$ROOT/src/live_switch.cpp" "$ROOT/src/log.cpp" -lvulkan -o "$OUT/vk_shaders_test"
+
+g++ -O2 -std=c++20 -g -I "$ROOT/src" -I "$INCLUDE" \
     "$ROOT/tools/vk_surface_test.cpp" "$ROOT/src/gpu/vk/vk_context.cpp" "$ROOT/src/gpu/vk/vk_shader.cpp" \
     "$ROOT/src/gpu/vk/vk_surface.cpp" -lvulkan -o "$OUT/vk_surface_test"
 
