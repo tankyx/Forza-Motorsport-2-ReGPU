@@ -2681,6 +2681,24 @@ struct PipelinePool
 
 std::shared_ptr<PipelineEntry> EnsurePipeline(const CompiledShader& vs, const CompiledShader& ps, const PipelineKey& key)
 {
+    // FM2_PIPELINE_KEYS=<file>: record every pipeline state the game asks for, one per line
+    // (vs ps blend depth stencilMaskMode flags). A capture of a real session is the corpus the
+    // Vulkan backend checks its own state translation against (tools/vk_pipelines_test).
+    if (const char* path = getenv("FM2_PIPELINE_KEYS"))
+    {
+        static FILE* keys = nullptr;
+        static std::unordered_set<uint64_t> seen;
+        if (!keys)
+            keys = fopen(path, "w");
+        const uint64_t id = key.vs * 0x100000001B3ull ^ key.ps ^ (uint64_t(key.blend) << 32) ^ key.depth ^
+            (uint64_t(key.stencilMaskMode) << 16) ^ key.flags;
+        if (keys && seen.insert(id).second)
+        {
+            fprintf(keys, "%016llx %016llx %08x %08x %08x %08x\n", (unsigned long long)key.vs, (unsigned long long)key.ps,
+                key.blend, key.depth, key.stencilMaskMode, key.flags);
+            fflush(keys);
+        }
+    }
     if (auto it = g_r.pipelines.find(key); it != g_r.pipelines.end())
         return it->second;
     const uint32_t blend = key.blend, depth = key.depth;
