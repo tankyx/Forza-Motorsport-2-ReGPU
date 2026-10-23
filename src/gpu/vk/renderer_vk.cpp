@@ -720,6 +720,18 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     for (uint32_t slot = 0; slot < 32; slot++)
         if ((ps->usedTextureSlots | vs->usedTextureSlots) & (1u << slot))
             BindTexture(pc, slot);
+    // A slot the shader declares but the draw never supplies a fetch for keeps index 0 — the white
+    // null texture — but a tinfo size of 0x0, and a sample scaled by zero is not a white pixel: it
+    // lands on whatever texel the arithmetic produces, which draws a 1-pixel stripe pattern of the
+    // wrong texture across the surface. Give every unbound slot a 1x1 size so sampling it is a
+    // constant, which is what a missing texture should look like.
+    for (uint32_t slot = 0; slot < 32; slot++)
+        if (((ps->usedTextureSlots | vs->usedTextureSlots) & (1u << slot)) && pc.tinfo[slot][1] == 0)
+        {
+            pc.tinfo[slot][1] = 1;
+            pc.tinfo[slot][2] = 1;
+            pc.tinfo[slot][3] = 1;
+        }
 }
 }
 
