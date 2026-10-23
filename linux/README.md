@@ -15,6 +15,7 @@ Measured here (Ryzen 9950X3D, RTX 5090, Proton 11):
 | Menu → race, 1080p, keyboard | works, including the throttle (`W`) |
 | Audio | 5.1 at 48 kHz through XAudio2 → FAudio, 0 dropped frames |
 | Shader cache | reused from disk, no recompiles after the first start |
+| A 12 minute session | 103 200 frames at the 144 fps cap, 4 083 shaders, 1 044 pipelines, 7 088 textures, 0 compile failures, 0 untranslated shaders, 0 frames over 25 ms |
 
 ## Requirements
 
@@ -88,7 +89,12 @@ linux/bench.sh FM2_PERF=1                           # the same with the per-sect
   (the mesh archives are deflated in the track and car zips), not the renderer and not
   vkd3d. The one-off renderer spike at the start of a race (208 resources, ~20 ms of texture
   setup in one frame) is covered by the port's loading screen.
-* **Untested here**: gamepads (the port maps the keyboard: `W`/`S` pedals, `A`/`D` steer,
-  arrows + `Enter` for menus), DLC packs, AMD/Steam Deck GPUs, ultrawide.
+* **Tested with a controller**: an Xbox Series pad through Proton's XInput works — a 12 minute
+  session (menus, car and track selection, races) with 103 200 frames, A/B/X/Y, START, the
+  D-pad, RB, both triggers through their full range and both sticks through theirs, recorded
+  with `FM2_RECORD_INPUT` and checked sample by sample. The keyboard mapping still works
+  alongside it (`W`/`S` pedals, `A`/`D` steer, arrows + `Enter` for menus).
+* **Still untested**: DLC packs, the title-update build, AMD/Steam Deck GPUs, ultrawide,
+  LB/BACK/stick clicks (nothing in that session used them).
 * DLSS is not available this way (it needs NVIDIA's NGX, which vkd3d-proton does not
   provide); FSR is in the source but hidden from the launcher.
