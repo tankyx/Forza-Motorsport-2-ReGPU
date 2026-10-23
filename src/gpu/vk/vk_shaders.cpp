@@ -3,6 +3,8 @@
 
 #include <cstdio>
 
+#include "log.h"
+
 #include "gpu/hlsl.h"
 #include "gpu/ucode.h"
 #include "gpu/vk/vk_shader.h"
@@ -65,6 +67,15 @@ const VkShader* ShaderGet(Context& context, ShaderSet& set, uint64_t hash, const
     }
     shader.ok = true;
     set.compiled++;
+    {
+        static uint32_t logged = 0;
+        if (logged < 12)
+        {
+            logged++;
+            Log("shader_vk: %s %016llx texture slots %08x, constants %u", pixel ? "ps" : "vs", (unsigned long long)hash,
+                shader.usedTextureSlots, shader.constantsUsed);
+        }
+    }
     auto& entry = set.shaders[hash];
     entry = std::move(shader);
     return &entry;

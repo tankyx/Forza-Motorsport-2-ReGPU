@@ -17,6 +17,7 @@
 
 #include "gpu/constants.h"
 #include "gpu/indices.h"
+#include "gpu/texture.h"
 #include "gpu/regs.h"
 #include "gpu/renderer.h"
 #include "gpu/vk/vk_context.h"
@@ -50,7 +51,7 @@ struct State
     vk::Context context;
     vk::ShaderSet shaders;
     vk::SurfaceCache surfaces;
-    vk::TextureCache textures;
+    vk::TextureCache textures0; // the bindless uploader
     vk::DrawContext draw;
     VkSampler samplers[4]{};
     VkBuffer gmem = VK_NULL_HANDLE, gphys = VK_NULL_HANDLE;
@@ -58,11 +59,21 @@ struct State
 
     uint64_t vsHash = 0, psHash = 0;
     VkShaderModule flatModule = VK_NULL_HANDLE; // the FM2_VK_TESTPS shader, when used
+
+    // Decoded textures, by fetch identity: the index the shader samples, and a hash of the
+    // guest data so a rewritten texture is re-uploaded instead of being served stale.
+    struct CachedTexture
+    {
+        uint32_t index = 0;
+        uint64_t hash = 0;
+    };
+    std::unordered_map<uint64_t, CachedTexture> textures;
     std::vector<uint32_t> vsCode, psCode;
     uint64_t frame = 0;
     bool reportedDraws = false;
     uint32_t surfacesSeen = 0;
     uint32_t skippedShader = 0, skippedSurface = 0, skippedIndex = 0, skippedPipeline = 0, skippedDraw = 0;
+    uint32_t texBound = 0, texFailed = 0, texSlots = 0;
 
     // The frame: one command buffer, one render pass per surface (the D3D12 path does the same
     // — the guest's tile replays become one pass), submitted when the guest swaps.
@@ -265,9 +276,9 @@ void TestDraw(vk::Surface& surface)
     vk::SurfaceBegin(g.context, surface, g.cmd, &clear);
     Log("renderer_vk: test draw: pass open");
     vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    VkDescriptorSet sets[3] = { g.draw.set0, g.textures.set, g.textures.set };
+    VkDescriptorSet sets[3] = { g.draw.set0, g.textures0.set, g.textures0.set };
     const uint32_t offsets[2] = { 0, 0 };
-    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.draw.layout, 0, 3, sets, 2, offsets);
+    
     vkCmdDraw(g.cmd, 3, 1, 0, 0);
     vk::SurfaceEnd(g.context, surface, g.cmd);
     Log("renderer_vk: test draw: recorded");
@@ -284,6 +295,82 @@ void ClosePass()
 }
 
 // The constant blocks, filled the way the D3D12 path fills them (renderer.cpp: DrawImpl).
+// FNV over the guest bytes a texture covers, sampled: enough to notice the game rewriting one.
+uint64_t GuestTextureHash(const TextureFetch& fetch)
+{
+    const size_t bytes = std::min<size_t>(TextureSourceSize(fetch), 4u << 20);
+    if (!bytes)
+        return 0;
+    const uint8_t* source = GuestPtr<uint8_t>(GpuPhysToGuest(fetch.Address()));
+    uint64_t hash = 0xCBF29CE484222325ull;
+    const size_t step = std::max<size_t>(4, bytes / 512 / 4 * 4);
+    for (size_t i = 0; i < bytes; i += step)
+    {
+        hash = (hash ^ source[i]) * 0x100000001B3ull;
+    }
+    return hash ^ bytes;
+}
+
+// One fetch slot: decode on the CPU (every format the decoder knows) and hand the shader a
+// bindless index. Cube maps and unsupported formats keep the null texture for now.
+void BindTexture(gpu::PSConstants& pc, uint32_t slot)
+{
+    g.texSlots++;
+    const TextureFetch fetch = ReadTextureFetch(slot);
+    if (fetch.Type() != 2 || fetch.Dimension() == 3 || !TextureFormatSupported(fetch.Format()))
+    {
+        g.texFailed++;
+        return;
+    }
+    // Cache first: decoding is milliseconds (tiling, format conversion) and a draw samples the
+    // same textures every frame, so only a new or rewritten one goes through the decoder.
+    const uint64_t key = uint64_t(fetch.Address()) << 24 ^ uint64_t(fetch.Format()) << 16 ^ uint64_t(fetch.Width()) ^
+        uint64_t(fetch.Height()) << 40 ^ uint64_t(fetch.Swizzle()) << 8;
+    const uint64_t hash = GuestTextureHash(fetch);
+    uint32_t index = 0;
+    auto cached = g.textures.find(key);
+    if (cached != g.textures.end() && cached->second.hash == hash)
+    {
+        index = cached->second.index;
+    }
+    else
+    {
+        std::vector<uint8_t> rgba;
+        if (!DecodeTexture(fetch, rgba))
+            return;
+        if (cached != g.textures.end())
+        {
+            index = cached->second.index;
+            vk::TextureReplace(g.context, g.textures0, index, fetch.Width(), fetch.Height(), rgba.data());
+            cached->second.hash = hash;
+        }
+        else
+        {
+            index = vk::TextureAdd(g.context, g.textures0, fetch.Width(), fetch.Height(), rgba.data());
+            if (index == UINT32_MAX)
+                return;
+            g.textures[key] = { index, hash };
+        }
+    }
+
+    // The tables the pixel shader reads (see the D3D12 path's fill in renderer.cpp).
+    const uint32_t clampX = (fetch.dwords[0] >> 10) & 7, clampY = (fetch.dwords[0] >> 13) & 7;
+    const bool clamp = clampX != 0 && clampY != 0;
+    const bool point = ((fetch.dwords[3] >> 19) & 3) == 0;
+    pc.tinfo[slot][0] = (point ? (clamp ? 2u : 3u) : (clamp ? 1u : 0u)) | ((uint32_t(fetch.ExpAdjust()) & 0x3F) << 8);
+    if (!clamp)
+        pc.tinfo[slot][0] |= (clampX ? 1u << 18 : 0u) | (clampY ? 1u << 19 : 0u);
+    if (clampX >= 6 && clampY >= 6)
+        pc.tinfo[slot][0] |= (1u << 16) | ((fetch.dwords[5] & 3) == 1 ? 1u << 17 : 0u);
+    pc.tinfo[slot][1] = fetch.Width();
+    pc.tinfo[slot][2] = fetch.Height();
+    pc.tinfo[slot][3] = 1; // 2D, swizzled on the CPU while decoding
+    pc.tbias[slot][0] = fetch.LodBias();
+    memcpy(&pc.tbias[slot][1], &index, 4);
+    pc.tbias[slot][2] = pc.tbias[slot][3] = 1.0f;
+    g.texBound++;
+}
+
 void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConstants& vc, gpu::PSConstants& pc)
 {
     const uint8_t* banks = gpureg::File() + gpureg::AluConstants * 4;
@@ -360,6 +447,11 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
         pc.tbias[slot][2] = 0.0f;
         pc.tbias[slot][3] = 0.0f;
     }
+    // Every fetch slot either shader samples: decode, upload, and put the bindless index in
+    // the tables the shader reads.
+    for (uint32_t slot = 0; slot < 32; slot++)
+        if ((ps->usedTextureSlots | vs->usedTextureSlots) & (1u << slot))
+            BindTexture(pc, slot);
 }
 }
 
@@ -384,7 +476,7 @@ bool Init()
     }
     Log("renderer_vk: %s, doing the frame loop; draws are not translated yet", g.context.props.deviceName);
     g.shaders.cacheDir = "out/vkcache";
-    if (!vk::TextureCacheInit(g.context, g.textures, 1024))
+    if (!vk::TextureCacheInit(g.context, g.textures0, 1024))
     {
         g.failed = true;
         return false;
@@ -399,7 +491,7 @@ bool Init()
     // Bindless index 0 is the null texture: white, so a draw whose textures are not captured yet
     // reads white instead of an unbound descriptor.
     const uint8_t white[4] = { 255, 255, 255, 255 };
-    if (vk::TextureAdd(g.context, g.textures, 1, 1, white) != 0)
+    if (vk::TextureAdd(g.context, g.textures0, 1, 1, white) != 0)
     {
         Log("renderer_vk: could not create the null texture");
         g.failed = true;
@@ -410,7 +502,7 @@ bool Init()
     g.gphys = vk::CreateHostImportedBuffer(g.context, GuestPtr<uint8_t>(0xA0000000), 0x20000000);
     if (!g.gphys)
         Log("renderer_vk: guest memory is not importable; vertex data will read as zero");
-    if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
+    if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures0.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
     {
         Log("renderer_vk: draw context failed");
         g.failed = true;
@@ -578,7 +670,7 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
     }
-    if (!vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures.set, vc, pc, list.data(), uint32_t(list.size())))
+    if (!vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures0.set, vc, pc, list.data(), uint32_t(list.size())))
     {
         if (g.skippedDraw++ < 4)
             Log("renderer_vk: DrawList refused (%zu vertices)", list.size());
@@ -609,9 +701,12 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
         DumpSurface(*last);
     }
     g.frame = frame;
-    g.drawsThisFrame = 0;
     vk::DrawBeginFrame(g.draw);
     if (frame % 60 == 0)
-        Log("renderer_vk: frame %llu, %u draws, %u shaders compiled, %zu surfaces, %u pipelines",
-            (unsigned long long)frame, draws, g.shaders.compiled, g.surfaces.surfaces.size(), unsigned(g.pipelines.size()));
+        Log("renderer_vk: frame %llu, %u draws, %u shaders compiled, %zu surfaces, %u pipelines, textures bound %u, "
+            "refused %u of %u slots",
+            (unsigned long long)frame, draws, g.shaders.compiled, g.surfaces.surfaces.size(), unsigned(g.pipelines.size()),
+            g.texBound, g.texFailed, g.texSlots);
+    g.drawsThisFrame = 0;
+    g.texBound = g.texFailed = g.texSlots = 0;
 }
