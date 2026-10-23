@@ -877,8 +877,11 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     {
         static const uint64_t traceFrame = getenv("FM2_VK_TRACE_DRAW") ? strtoull(getenv("FM2_VK_TRACE_DRAW"), nullptr, 10) : 0;
         static bool traced = false;
-        if (traceFrame && !traced && g.frame >= traceFrame)
+        static uint32_t tracedDraws = 0;
+        static const uint32_t traceCount = getenv("FM2_VK_TRACE_COUNT") ? uint32_t(atoi(getenv("FM2_VK_TRACE_COUNT"))) : 1;
+        if (traceFrame && g.frame >= traceFrame && tracedDraws < traceCount)
         {
+            tracedDraws++;
             traced = true;
             Log("trace_vk: frame %llu draw prim %u, %zu vertices, vte %08x, target %u %u, scale %g %g offset %g %g",
                 (unsigned long long)g.frame, initiator & 0x3F, list.size(), vc.vte[0], vc.info[2], vc.info[3], vc.vscale[0],
@@ -890,15 +893,16 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
                 const uint8_t* source = GuestPtr<uint8_t>(0xA0000000 + (vc.vf[k][0] & 0x1FFFFFFF));
                 Log("trace_vk:   vf%u offset %08x endian %u source %u, vfl %08x %08x %08x %08x", k, vc.vf[k][0], vc.vf[k][1],
                     vc.vf[k][2], vc.vfl[k][0], vc.vfl[k][1], vc.vfl[k][2], vc.vfl[k][3]);
-                for (int d = 0; d < 8; d++)
-                {
-                    uint32_t word = 0;
-                    memcpy(&word, source + d * 4, 4);
-                    const uint32_t be = __builtin_bswap32(word);
-                    float f;
-                    memcpy(&f, &be, 4);
-                    Log("trace_vk:     +%d: %08x (as float %g)", d * 4, be, f);
-                }
+                if (tracedDraws <= 1)
+                    for (int d = 0; d < 8; d++)
+                    {
+                        uint32_t word = 0;
+                        memcpy(&word, source + d * 4, 4);
+                        const uint32_t be = __builtin_bswap32(word);
+                        float f;
+                        memcpy(&f, &be, 4);
+                        Log("trace_vk:     +%d: %08x (as float %g)", d * 4, be, f);
+                    }
             }
         }
     }
