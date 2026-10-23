@@ -484,20 +484,30 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
             index = it->second.index;
         else
         {
+            // Each face starts one TextureFaceStride further into guest memory. Decoding from a
+            // source pointer rather than rewriting the fetch's address field: that field is only
+            // accurate to 4 KB, so a linear face stride of a few hundred bytes folded every face
+            // back onto the first one.
             const uint32_t stride = TextureFaceStride(fetch);
+            const uint8_t* base = GuestPtr<uint8_t>(GpuPhysToGuest(fetch.Address()));
             std::vector<std::vector<uint8_t>> faces(6);
             const uint8_t* pointers[6]{};
             for (uint32_t face = 0; face < 6; face++)
             {
-                TextureFetch faceFetch = fetch;
-                faceFetch.dwords[1] = (faceFetch.dwords[1] & ~0xFFFFF000u) | ((fetch.Address() + face * stride) & 0xFFFFF000u);
-                if (!DecodeTexture(faceFetch, faces[face]))
+                if (!DecodeTexture(fetch, base + size_t(face) * stride, faces[face]))
                 {
                     g.texFailed++;
                     return;
                 }
                 pointers[face] = faces[face].data();
             }
+            static uint32_t loggedCubes = 0;
+            if (loggedCubes++ < 6)
+                Log("cube_vk: %08x format %u (%s) %ux%u stride %u, first face centre %u %u %u", fetch.Address(), fetch.Format(),
+                    TextureFormatName(fetch.Format()), fetch.Width(), fetch.Height(), stride,
+                    faces[0][(size_t(fetch.Height() / 2) * fetch.Width() + fetch.Width() / 2) * 4 + 0],
+                    faces[0][(size_t(fetch.Height() / 2) * fetch.Width() + fetch.Width() / 2) * 4 + 1],
+                    faces[0][(size_t(fetch.Height() / 2) * fetch.Width() + fetch.Width() / 2) * 4 + 2]);
             index = vk::TextureAddCube(g.context, g.cubes, fetch.Width(), fetch.Height(), pointers);
             if (index == UINT32_MAX)
                 return;
