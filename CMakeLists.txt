@@ -43,6 +43,14 @@ endif()
 message(STATUS "mftb: ${FM2_MFTB_RESULT}")
 
 file(GLOB_RECURSE FM2_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+# The native Vulkan renderer is opt-in: it needs the Vulkan headers and dxc, which the
+# default (Windows, Direct3D 12) build neither has nor wants. linux/vk.sh builds it natively.
+option(FM2_VULKAN "Build the native Vulkan renderer backend" OFF)
+if(FM2_VULKAN)
+    find_package(Vulkan REQUIRED)
+else()
+    list(FILTER FM2_SOURCES EXCLUDE REGEX "src/gpu/vk/")
+endif()
 if(FM2_TITLE_UPDATE)
     set(FM2_TU_DIR "${CMAKE_SOURCE_DIR}/out/tu4")
     set(FM2_REMAP_DIR "${CMAKE_BINARY_DIR}/remapped")
@@ -102,6 +110,9 @@ add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_dif
     "${FM2_FFX}/signedbin/amd_fidelityfx_loader_dx12.dll" "${FM2_FFX}/signedbin/amd_fidelityfx_upscaler_dx12.dll" $<TARGET_FILE_DIR:fm2>)
 add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${FM2_DLSS}/lib/Windows_x86_64/rel/nvngx_dlss.dll" $<TARGET_FILE_DIR:fm2>)
+if(FM2_VULKAN)
+    target_link_libraries(fm2 PRIVATE Vulkan::Vulkan)
+endif()
 target_link_libraries(fm2 PRIVATE fm2_ppc XenonUtils synchronization winmm onecore d3d12 dxgi d3dcompiler)
 target_compile_definitions(fm2 PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(fm2 PRIVATE -gline-tables-only)
