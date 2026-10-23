@@ -32,6 +32,7 @@
 #include "memory.h"
 #include "png.h"
 #include "render/presenter.h"
+#include "render/presenter.h"
 #include "log.h"
 
 namespace
@@ -140,6 +141,56 @@ VkPipeline PipelineFor(const vk::StateKey& key, const vk::VkShader* vs, const vk
 // Closes the pass the current surface has open, if any.
 // Writes a surface out as a PNG (out/vk_frame.png): the first thing to look at when the draw
 // path is being brought up.
+// The surface's pixels as RGBA8, through the resolve path the surface test verified.
+bool ReadSurface(vk::Surface& surface, std::vector<uint8_t>& rgba)
+{
+    const VkDeviceSize bytes = VkDeviceSize(surface.width) * surface.height * 8; // RGBA16F
+    void* readback = nullptr;
+    VkBuffer copy = vk::CreateBuffer(g.context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &readback);
+    if (!copy)
+        return false;
+    vk::Image resolved = vk::CreateImage(g.context, surface.width, surface.height, VK_FORMAT_R16G16B16A16_SFLOAT,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    const bool ok = resolved.image && vk::Submit(g.context, [&](VkCommandBuffer cmd) {
+        vk::SurfaceResolve(g.context, surface, cmd, resolved.image, surface.width, surface.height);
+        VkBufferImageCopy region{};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent = { surface.width, surface.height, 1 };
+        vkCmdCopyImageToBuffer(cmd, resolved.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy, 1, &region);
+    });
+    if (ok)
+    {
+        auto half = [](uint16_t h) {
+            const uint32_t sign = uint32_t(h & 0x8000u) << 16;
+            uint32_t exp = (h >> 10) & 0x1F, man = h & 0x3FF, bits = 0;
+            if (exp == 0)
+                bits = sign;
+            else if (exp == 31)
+                bits = sign | 0x7F800000u | (man << 13);
+            else
+                bits = sign | ((exp + 127 - 15) << 23) | (man << 13);
+            float f;
+            memcpy(&f, &bits, 4);
+            return f;
+        };
+        const uint16_t* src = static_cast<const uint16_t*>(readback);
+        rgba.assign(size_t(surface.width) * surface.height * 4, 0);
+        for (size_t i = 0; i < size_t(surface.width) * surface.height; i++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                const float v = std::min(1.0f, std::max(0.0f, half(src[i * 4 + c])));
+                rgba[i * 4 + c] = uint8_t(v * 255.0f);
+            }
+            rgba[i * 4 + 3] = 255;
+        }
+    }
+    vkDeviceWaitIdle(g.context.device);
+    vk::DestroyImage(g.context, resolved);
+    vkDestroyBuffer(g.context.device, copy, nullptr);
+    return ok;
+}
+
 void DumpSurface(vk::Surface& surface)
 {
     const VkDeviceSize bytes = VkDeviceSize(surface.width) * surface.height * 8; // RGBA16F
@@ -799,6 +850,15 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
     static bool dumpedOnce = false;
     const bool timeDump = dumpAt >= 0 && !dumpedOnce &&
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() >= dumpAt;
+    // Windowed: hand the frame to the presenter (which still uploads and blits it on the D3D12
+    // side — a real Vulkan swap chain is the platform layer's job, this is for looking at it now).
+    static const bool windowed = getenv("FM2_HEADLESS") == nullptr;
+    if (windowed && last && draws)
+    {
+        std::vector<uint8_t> rgba;
+        if (ReadSurface(*last, rgba) && rgba.size() == size_t(1280) * 720 * 4)
+            PresenterSubmitImage(1280, 720, std::move(rgba));
+    }
     if (last && (timeDump || (dumpAt < 0 && frame % 500 == 0)) && draws)
     {
         static const bool test = getenv("FM2_VK_TESTDRAW") != nullptr;
