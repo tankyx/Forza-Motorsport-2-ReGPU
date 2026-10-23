@@ -2,6 +2,7 @@
 #include "gpu/vk/vk_state.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace vk
 {
@@ -113,7 +114,8 @@ bool CreatePipeline(const Context& context, const StateKey& key, VkShaderModule 
     multisample.alphaToCoverageEnable = alphaToMask ? VK_TRUE : VK_FALSE;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-    depthStencil.depthTestEnable = (depth >> 1) & 1 ? VK_TRUE : VK_FALSE;
+    static const bool noDepth = getenv("FM2_VK_NO_DEPTH") != nullptr; // A/B: is the band a depth test?
+    depthStencil.depthTestEnable = !noDepth && ((depth >> 1) & 1) ? VK_TRUE : VK_FALSE;
     depthStencil.depthWriteEnable = (depth >> 2) & 1 ? VK_TRUE : VK_FALSE;
     depthStencil.depthCompareOp = Compare((depth >> 4) & 7);
     depthStencil.depthBoundsTestEnable = VK_FALSE;

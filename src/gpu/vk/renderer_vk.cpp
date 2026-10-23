@@ -111,6 +111,92 @@ float RegFloat(uint32_t index)
     return f;
 }
 
+// The guest's own pass dimensions, lifted from the D3D12 path (renderer.cpp: BigPassSize,
+// PassWidth, PassHeight, PassScale, ScaleX, ScaleY). A "big pass" is a render target wider than
+// the screen — the paint editor's 1024x1024 livery target, the tall shadow maps — and its pass
+// size is what the shaders divide by, while the host viewport shrinks to fit. Substituting the
+// host size for it (which this renderer did) squeezes those draws into part of the frame.
+constexpr uint32_t kWidth = 1280, kHeight = 720;
+// The guest's window scissor, lifted from the D3D12 path (renderer.cpp: WindowScissor), which
+// also detects the tall pass: a scissor reaching past the screen height on a pass narrower than
+// it. Its y extent becomes the pass height, which is what the shaders divide by — the reason the
+// 3D content was landing in a band at the top.
+uint32_t g_tallInfo = ~0u, g_tallHeight = 0;
+uint32_t PassWidth();
+uint32_t PassHeight();
+struct ScissorRect
+{
+    int32_t left = 0, top = 0, right = 0, bottom = 0;
+};
+
+ScissorRect WindowScissor()
+{
+    const uint32_t offsetReg = gpureg::Get(0x2080 /* PA_SC_WINDOW_OFFSET */);
+    const int32_t wx = int32_t(offsetReg << 17) >> 17, wy = int32_t((offsetReg >> 16) << 17) >> 17;
+    const bool vertexOffset = (gpureg::Get(gpureg::PA_SU_SC_MODE_CNTL) >> 16) & 1;
+    const uint32_t tl = gpureg::Get(0x2081 /* PA_SC_WINDOW_SCISSOR_TL */), br = gpureg::Get(0x2082 /* BR */);
+    int32_t x0 = int32_t(tl & 0x3FFF), y0 = int32_t((tl >> 16) & 0x3FFF), x1 = int32_t(br & 0x3FFF), y1 = int32_t((br >> 16) & 0x3FFF);
+    if (!(tl >> 31))
+    {
+        x0 += wx;
+        x1 += wx;
+        y0 += wy;
+        y1 += wy;
+    }
+    if (vertexOffset)
+    {
+        x0 -= wx;
+        x1 -= wx;
+        y0 -= wy;
+        y1 -= wy;
+    }
+    const uint32_t surfaceInfo = gpureg::Get(0x2000 /* RB_SURFACE_INFO */);
+    if (y1 > int32_t(kHeight) && y1 <= 2048 && (surfaceInfo & 0x3FFF) < kWidth)
+    {
+        static uint32_t logged = 0;
+        if (logged++ < 3)
+            Log("tall_vk: scissor y %d..%d x %d..%d, window offset %d,%d, vertexOffset %d, surface %08X", y0, y1, x0, x1, wx, wy,
+                int(vertexOffset), surfaceInfo);
+        g_tallInfo = surfaceInfo;
+        g_tallHeight = uint32_t(y1);
+    }
+    const int32_t maxX = int32_t(PassWidth()), maxY = int32_t(PassHeight());
+    ScissorRect rect;
+    rect.left = std::clamp(x0, 0, maxX);
+    rect.top = std::clamp(y0, 0, maxY);
+    rect.right = std::clamp(x1, 0, maxX);
+    rect.bottom = std::clamp(y1, 0, maxY);
+    return rect;
+}
+
+uint32_t BigPassSize()
+{
+    const uint32_t pitch = gpureg::Get(0x2000 /* RB_SURFACE_INFO */) & 0x3FFF;
+    return pitch > kWidth ? std::min<uint32_t>(2048, pitch * 64 / 65) : 0;
+}
+uint32_t PassWidth() { const uint32_t big = BigPassSize(); return big ? big : kWidth; }
+uint32_t PassHeight()
+{
+    const uint32_t big = BigPassSize();
+    if (big)
+        return big;
+    const uint32_t surface = gpureg::Get(0x2000 /* RB_SURFACE_INFO */);
+    return g_tallHeight && surface == g_tallInfo ? g_tallHeight : kHeight;
+}
+float PassScale() { return std::min(float(kWidth) / float(PassWidth()), float(kHeight) / float(PassHeight())); }
+float ScaleY()
+{
+    uint32_t w = 0, h = 0;
+    RenderSize(w, h);
+    return float(h) / float(kHeight) * PassScale();
+}
+float ScaleX()
+{
+    uint32_t w = 0, h = 0;
+    RenderSize(w, h);
+    return (gpureg::Get(0x2000) & 0x3FFF) == kWidth ? float(w) / float(kWidth) * PassScale() : ScaleY();
+}
+
 vk::StateKey MakeKey(uint64_t vs, uint64_t ps, bool cullable)
 {
     vk::StateKey key;
@@ -558,8 +644,9 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     // point sprites are placed from these, not from the viewport.
     uint32_t targetWidth = 0, targetHeight = 0;
     RenderSize(targetWidth, targetHeight);
-    vc.info[2] = targetWidth;
-    vc.info[3] = targetHeight;
+    // The guest's pass size, not the host target (see PassWidth above).
+    vc.info[2] = PassWidth();
+    vc.info[3] = PassHeight();
     // Screen-space draws (PA_CL_VTE_CNTL's scale/offset bits clear) carry *guest* pixels, not
     // host ones: the trace shows a background rectangle whose corner sits at 639.5 while the host
     // target is 1280 wide, and those draws landed in the top-left quadrant — the signature of

@@ -139,7 +139,10 @@ void SurfaceBegin(Context& context, Surface& surface, VkCommandBuffer cmd, const
     VkClearValue values[2]{};
     if (clearColor)
         values[0].color = *clearColor;
-    values[1].depthStencil = { 1.0f, 0 };
+    // The guest renders reverse-Z (near 1, far 0) and compares GREATER, so a depth buffer cleared
+    // to 1.0 is "everything already at the near plane" and rejects every fragment — which is what
+    // put the car in a band at the top. Cleared to 0, the far plane, as reverse-Z wants.
+    values[1].depthStencil = { 0.0f, 0 };
     begin.clearValueCount = 2;
     begin.pClearValues = values;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
