@@ -575,6 +575,22 @@ void RendererVkSetShader(uint32_t type, const uint32_t* microcodeBE, uint32_t us
 // ---- Draws ------------------------------------------------------------------------------
 void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
 {
+    // Resolve packets (RB_MODECONTROL 6) copy EDRAM into memory: they are not geometry and must
+    // not be drawn as triangles. The D3D12 path turns them into a texture the title samples
+    // later (BlitResolve / EnsureResolved); that is the next piece here.
+    if ((gpureg::Get(0x2208 /* RB_MODECONTROL */) & 7) == 6)
+    {
+        static uint32_t resolves = 0;
+        if (resolves < 6)
+        {
+            resolves++;
+            Log("resolve_vk: base %08x pitch %u height %u destInfo %08x source %u (initiator %08x, %u vertices listed)",
+                gpureg::Get(0x2319 /* RB_COPY_DEST_BASE */) & 0x1FFFFFFF, gpureg::Get(0x231A /* RB_COPY_DEST_PITCH */) & 0x3FFF,
+                (gpureg::Get(0x231A) >> 16) & 0x3FFF, gpureg::Get(0x231B /* RB_COPY_DEST_INFO */),
+                (gpureg::Get(0x2318 /* RB_COPY_CONTROL */) >> 4) & 7, initiator, initiator >> 16);
+        }
+        return;
+    }
     // The draw path is behind its own switch while it is being brought up: with just
     // FM2_RENDERER=vulkan the seam and the shader service run against the real game, and draws
     // are skipped rather than drawn wrongly.
