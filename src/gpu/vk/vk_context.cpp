@@ -144,8 +144,10 @@ bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout, VkDe
         sets0[i].descriptorCount = 1;
         sets0[i].stageFlags = stages;
     };
-    bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, both);       // VSConstants
-    bind(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, both);       // PSConstants
+    // The two constant blocks change every draw: bound once as a set with dynamic offsets
+    // rather than rewritten per draw.
+    bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 0, both); // VSConstants
+    bind(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both); // PSConstants
     bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 100, both);     // gmem
     bind(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 101, both);     // gphys (guest memory)
     for (int i = 0; i < 4; i++)

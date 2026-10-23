@@ -264,7 +264,8 @@ int main(int argc, char** argv)
         vkCmdBeginRenderPass(cb, &begin, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         VkDescriptorSet sets[2] = { set0, textures.set };
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
+        const uint32_t offsets[2] = { 0, 0 }; // dynamic constants: unused by this pass
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 2, offsets);
         VkViewport v{ 0, 0, float(width), float(height), 0, 1 };
         VkRect2D s{ { 0, 0 }, { width, height } };
         vkCmdSetViewport(cb, 0, 1, &v);
