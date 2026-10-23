@@ -100,7 +100,8 @@ struct State
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     vk::Surface* openSurface = nullptr;
     bool passOpen = false;
-    uint64_t drawsThisFrame = 0;
+    uint64_t drawsThisFrame = 0;   // ordinal of the next draw in this frame
+    uint64_t skippedByFilter = 0;  // FM2_VK_ONLY_DRAW / FM2_VK_SKIP_DRAWS
 } g;
 
 float RegFloat(uint32_t index)
@@ -1079,6 +1080,28 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
     }
+    // FM2_VK_ONLY_DRAW=<n> / FM2_VK_SKIP_DRAWS=<a>-<b>: draw a frame one draw at a time to see what
+    // each contributes — the quickest way to find the draw that should be filling a region and is
+    // not. Indices are this frame's draw order.
+    {
+        static const uint32_t onlyDraw = getenv("FM2_VK_ONLY_DRAW") ? uint32_t(atoi(getenv("FM2_VK_ONLY_DRAW"))) : UINT32_MAX;
+        static const bool skipParsed = [] { return true; }();
+        (void)skipParsed;
+        static uint32_t skipFrom = 0, skipTo = 0;
+        static const bool haveSkip = [] {
+            const char* e = getenv("FM2_VK_SKIP_DRAWS");
+            if (!e) return false;
+            sscanf(e, "%u-%u", &skipFrom, &skipTo);
+            return true;
+        }();
+        // The ordinal is taken here and not at the end of the function, so a skipped draw still
+        // advances it — otherwise the first draw would be the only one ever considered.
+        const uint32_t index = g.drawsThisFrame++;
+        const bool skip = onlyDraw != UINT32_MAX ? index != onlyDraw : (haveSkip && index >= skipFrom && index < skipTo);
+        g.skippedByFilter += skip ? 1 : 0;
+        if (skip)
+            return;
+    }
     // FM2_VK_TRACE_DRAW=<frame>: on the first draw of that frame, print the vertex data the
     // shader will fetch, so the guest's own coordinates can be read instead of inferred.
     {
@@ -1092,8 +1115,9 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         {
             tracedDraws++;
             traced = true;
-            Log("trace_vk: frame %llu draw prim %u, %zu vertices, vte %08x, target %u %u, scale %g %g offset %g %g",
-                (unsigned long long)g.frame, initiator & 0x3F, list.size(), vc.vte[0], vc.info[2], vc.info[3], vc.vscale[0],
+            Log("trace_vk: frame %llu draw prim %u, %zu vertices, ps %016llx tex %u (%ux%u), target %u %u, scale %g %g offset %g %g",
+                (unsigned long long)g.frame, initiator & 0x3F, list.size(), g.psHash, pc.tbias[0][1] ? uint32_t(pc.tbias[0][1]) : 0u,
+                pc.tinfo[0][1], pc.tinfo[0][2], vc.info[2], vc.info[3], vc.vscale[0],
                 vc.vscale[1], vc.voffset[0], vc.voffset[1]);
             if ((initiator & 0x3F) == 4)
                 for (int c = 0; c < 4; c++)
@@ -1140,7 +1164,7 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
             Log("renderer_vk: DrawList refused (%zu vertices)", list.size());
         return;
     }
-    g.drawsThisFrame++;
+    // (the ordinal was taken at the top of the function)
 }
 
 void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
@@ -1174,7 +1198,20 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
     // not the same wall-clock moment — the two land in different scenes otherwise, which has
     // misled more than one conclusion already.
     static const uint64_t dumpFrame = getenv("FM2_VK_DUMP_FRAME") ? strtoull(getenv("FM2_VK_DUMP_FRAME"), nullptr, 10) : 0;
-    const bool frameDump = dumpFrame && frame == dumpFrame;
+    // A capture asked for by the tour (RendererRequestCapture) names a frame too, so the D3D12 and
+    // Vulkan backends can be put on the same screen instead of the same frame counter.
+    // A capture asked for by the tour (out/capture.request) dumps this frame, so the two backends
+    // can be put on the same screen instead of the same frame counter — the menus advance on their
+    // own timers and frame numbers do not line up between them.
+    static bool captureFileSeen = false;
+    FILE* cf = captureFileSeen ? nullptr : std::fopen("out/capture.request", "rb");
+    if (cf)
+    {
+        std::fclose(cf);
+        std::remove("out/capture.request");
+        captureFileSeen = true;
+    }
+    const bool frameDump = (dumpFrame && frame == dumpFrame) || captureFileSeen;
     if (last && (frameDump || timeDump || (dumpAt < 0 && !dumpFrame && frame % 500 == 0)) && draws)
     {
         static const bool test = getenv("FM2_VK_TESTDRAW") != nullptr;
