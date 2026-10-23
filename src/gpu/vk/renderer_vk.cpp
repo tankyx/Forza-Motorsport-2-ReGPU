@@ -960,7 +960,11 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     static const uint32_t traceDrawsTex = getenv("FM2_VK_TRACE_TEX_DRAWS") ? uint32_t(atoi(getenv("FM2_VK_TRACE_TEX_DRAWS"))) : 0;
     static uint32_t tracedDrawsTex = 0;
     BuildConstants(vs, ps, vc, pc);
-    if (traceDrawsTex && tracedDrawsTex < traceDrawsTex && ps->usedTextureSlots && g.frame >= 600)
+    // FM2_VK_TRACE_PS=<hash>: only trace draws with that pixel shader, so the trace lands on the
+    // draw being investigated whatever the frame timing does (the sky is a62c809452fcc71b).
+    static const uint64_t tracePs = getenv("FM2_VK_TRACE_PS") ? strtoull(getenv("FM2_VK_TRACE_PS"), nullptr, 16) : 0;
+    const bool psMatch = !tracePs || g.psHash == tracePs;
+    if (traceDrawsTex && tracedDrawsTex < traceDrawsTex && ps->usedTextureSlots && psMatch)
     {
         tracedDrawsTex++;
         const ScissorRect clip = WindowScissor();
