@@ -74,6 +74,10 @@ struct State
     uint32_t surfacesSeen = 0;
     uint32_t skippedShader = 0, skippedSurface = 0, skippedIndex = 0, skippedPipeline = 0, skippedDraw = 0;
     uint32_t texBound = 0, texFailed = 0, texSlots = 0;
+    // Placement state per draw, histogrammed: the frame's dominant viewport is what matters, not
+    // whichever draw happened to be last.
+    std::unordered_map<uint64_t, uint32_t> viewports;
+    uint32_t viewportTarget = 0;
 
     // The frame: one command buffer, one render pass per surface (the D3D12 path does the same
     // — the guest's tile replays become one pass), submitted when the guest swaps.
@@ -673,6 +677,12 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         Log("renderer_vk:   surface %ux%u base %u, shaders vs %016llx ps %016llx", width, height, base,
             (unsigned long long)g.vsHash, (unsigned long long)g.psHash);
     }
+    {
+        // Which viewport the frame is actually drawn with (the dump reports the top ones).
+        const uint32_t scaleX = uint32_t(int32_t(vc.vscale[0])), scaleY = uint32_t(int32_t(vc.vscale[1]));
+        g.viewports[(uint64_t(scaleX) << 32) | uint64_t(scaleY)]++;
+        g.viewportTarget = vc.info[2];
+    }
     if (!vk::DrawList(g.context, g.draw, g.cmd, pipeline, g.textures0.set, vc, pc, list.data(), uint32_t(list.size())))
     {
         if (g.skippedDraw++ < 4)
@@ -701,6 +711,13 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
             TestDraw(*last); // records into the same command buffer; EndFrame below submits it
         }
         EndFrame();
+        {
+            std::vector<std::pair<uint32_t, uint64_t>> top(g.viewports.begin(), g.viewports.end());
+            std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.second > b.second; });
+            for (size_t i = 0; i < std::min<size_t>(top.size(), 3); i++)
+                Log("renderer_vk: dumped frame %llu: viewport scale %d %d, %u draws (target %u)",
+                    (unsigned long long)frame, int32_t(top[i].first >> 32), int32_t(top[i].first), top[i].second, g.viewportTarget);
+        }
         DumpSurface(*last);
     }
     g.frame = frame;
@@ -712,4 +729,5 @@ void RendererVkOnSwap(uint64_t frame, uint32_t frontBuffer)
             g.texBound, g.texFailed, g.texSlots);
     g.drawsThisFrame = 0;
     g.texBound = g.texFailed = g.texSlots = 0;
+    g.viewports.clear();
 }
