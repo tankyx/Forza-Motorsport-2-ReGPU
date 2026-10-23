@@ -96,7 +96,8 @@ int main(int argc, char** argv)
             printf("%s\n", t.hlsl.c_str());
         ID3DBlob* code = nullptr;
         ID3DBlob* errors = nullptr;
-        const HRESULT hr = D3DCompile(t.hlsl.data(), t.hlsl.size(), argv[i], nullptr, nullptr, "main", pixel ? "ps_5_1" : "vs_5_1",
+        const D3D_SHADER_MACRO macros[] = { { "FM2_VERTEX_STAGE", pixel ? nullptr : "" }, { nullptr, nullptr } };
+        const HRESULT hr = D3DCompile(t.hlsl.data(), t.hlsl.size(), argv[i], macros, nullptr, "main", pixel ? "ps_5_1" : "vs_5_1",
             D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_ENABLE_UNBOUNDED_DESCRIPTOR_TABLES, 0, &code, &errors);
         if (FAILED(hr))
         {

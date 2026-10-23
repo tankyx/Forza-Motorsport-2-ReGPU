@@ -120,6 +120,7 @@ file(GLOB FM2_FFMPEG_DLLS "${FM2_FFMPEG}/bin/avcodec-*.dll" "${FM2_FFMPEG}/bin/a
 add_custom_command(TARGET fm2 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FM2_FFMPEG_DLLS} $<TARGET_FILE_DIR:fm2>)
 
 # Xenos shader disassembler for captured microcode.
-add_executable(xenos_dis tools/xenos_dis.cpp src/gpu/ucode.cpp src/gpu/hlsl.cpp)
+# hlsl.cpp reads a live switch and logs, so the disassembler pulls those in too.
+add_executable(xenos_dis tools/xenos_dis.cpp src/gpu/ucode.cpp src/gpu/hlsl.cpp src/live_switch.cpp src/log.cpp)
 target_include_directories(xenos_dis PRIVATE src)
 target_link_libraries(xenos_dis PRIVATE d3dcompiler)
