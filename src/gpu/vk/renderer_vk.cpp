@@ -884,13 +884,19 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         static bool traced = false;
         static uint32_t tracedDraws = 0;
         static const uint32_t traceCount = getenv("FM2_VK_TRACE_COUNT") ? uint32_t(atoi(getenv("FM2_VK_TRACE_COUNT"))) : 1;
-        if (traceFrame && g.frame >= traceFrame && tracedDraws < traceCount)
+        static const uint32_t tracePrim = getenv("FM2_VK_TRACE_PRIM") ? uint32_t(atoi(getenv("FM2_VK_TRACE_PRIM"))) : 0xFF;
+        const bool primMatch = tracePrim == 0xFF || (initiator & 0x3F) == tracePrim;
+        if (traceFrame && g.frame >= traceFrame && tracedDraws < traceCount && primMatch)
         {
             tracedDraws++;
             traced = true;
             Log("trace_vk: frame %llu draw prim %u, %zu vertices, vte %08x, target %u %u, scale %g %g offset %g %g",
                 (unsigned long long)g.frame, initiator & 0x3F, list.size(), vc.vte[0], vc.info[2], vc.info[3], vc.vscale[0],
                 vc.vscale[1], vc.voffset[0], vc.voffset[1]);
+            if ((initiator & 0x3F) == 4)
+                for (int c = 0; c < 4; c++)
+                    Log("trace_vk:   vc[%d] = %g %g %g %g  (c[4..7] %g %g %g %g)", c, vc.c[c][0], vc.c[c][1], vc.c[c][2], vc.c[c][3],
+                        vc.c[c + 4][0], vc.c[c + 4][1], vc.c[c + 4][2], vc.c[c + 4][3]);
             for (size_t i = 0; i < std::min<size_t>(list.size(), 6); i++)
                 Log("trace_vk:   list[%zu] = %08x", i, list[i]);
             for (uint32_t k : vs->vertexFetchConstants)
