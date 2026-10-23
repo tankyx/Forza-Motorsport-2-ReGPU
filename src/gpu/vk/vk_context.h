@@ -39,7 +39,8 @@ VkBuffer CreateBuffer(const Context& context, VkDeviceSize size, VkBufferUsageFl
 // memory as storage buffers, four samplers, and one bindless array each for 2D and cube
 // textures (dxc's register mapping: b0/b1, t0->100, t1->101, s0..s3->200..203, and the
 // register spaces become descriptor sets 1 and 2).
-bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout);
+// set0Out (optional) receives the layout of set 0, for the caller to allocate a descriptor set from.
+bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout, VkDescriptorSetLayout* set0Out = nullptr);
 
 struct Image
 {

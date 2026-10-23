@@ -134,7 +134,7 @@ void Shutdown(Context& context)
     context = {};
 }
 
-bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout)
+bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout, VkDescriptorSetLayout* set0Out)
 {
     const VkShaderStageFlags both = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutBinding sets0[8]{};
@@ -186,7 +186,10 @@ bool CreateRendererLayout(const Context& context, VkPipelineLayout& layout)
     pli.pPushConstantRanges = &push;
     const bool ok = vkCreatePipelineLayout(context.device, &pli, nullptr, &layout) == VK_SUCCESS;
     vkDestroyDescriptorSetLayout(context.device, arrayLayout, nullptr);
-    vkDestroyDescriptorSetLayout(context.device, set0, nullptr);
+    if (set0Out)
+        *set0Out = set0;
+    else
+        vkDestroyDescriptorSetLayout(context.device, set0, nullptr);
     return ok;
 }
 
