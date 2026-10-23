@@ -33,6 +33,9 @@ void TextureCacheShutdown(Context& context, TextureCache& cache);
 // if the cache is full. Reuses a freed slot when there is one.
 uint32_t TextureAdd(Context& context, TextureCache& cache, uint32_t width, uint32_t height, const void* rgba,
     VkImageUsageFlags extraUsage = 0);
+// Reserves an index whose image is drawn into rather than uploaded (the renderer's resolves).
+// The image is created with the given usage and left in COLOR_ATTACHMENT_OPTIMAL.
+uint32_t TextureReserve(Context& context, TextureCache& cache, uint32_t width, uint32_t height);
 void TextureFree(Context& context, TextureCache& cache, uint32_t index);
 // Replaces the image in an existing slot (the renderer reuses an index when a texture's
 // contents change), so no descriptor has to be rewritten.

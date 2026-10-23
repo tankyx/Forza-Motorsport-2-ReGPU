@@ -22,6 +22,7 @@
 #include "gpu/renderer.h"
 #include "gpu/vk/vk_context.h"
 #include "gpu/vk/vk_draw.h"
+#include "gpu/vk/vk_resolve.h"
 #include "gpu/vk/vk_shader.h"
 #include "gpu/vk/vk_shaders.h"
 #include "gpu/vk/vk_state.h"
@@ -53,6 +54,18 @@ struct State
     vk::SurfaceCache surfaces;
     vk::TextureCache textures0; // the bindless uploader
     vk::DrawContext draw;
+    vk::Resolve resolve;
+
+    // Surface copies made for resolve packets, by the guest address they were resolved to: a
+    // fetch at that address samples the copy instead of decoding guest memory (which the
+    // renderer never wrote).
+    struct ResolvedTexture
+    {
+        uint32_t index = 0;
+        uint32_t width = 0, height = 0;
+        bool valid = false;
+    };
+    std::unordered_map<uint32_t, ResolvedTexture> resolved;
     VkSampler samplers[4]{};
     VkBuffer gmem = VK_NULL_HANDLE, gphys = VK_NULL_HANDLE;
     std::unordered_map<vk::StateKey, VkPipeline, StateKeyHash> pipelines;
@@ -323,6 +336,23 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
 {
     g.texSlots++;
     const TextureFetch fetch = ReadTextureFetch(slot);
+    // A resolve the renderer kept instead of writing to memory: sample that.
+    if (auto it = g.resolved.find(fetch.Address() & 0x1FFFFFFF); it != g.resolved.end() && it->second.valid)
+    {
+        const uint32_t index = it->second.index;
+        const uint32_t clampX = (fetch.dwords[0] >> 10) & 7, clampY = (fetch.dwords[0] >> 13) & 7;
+        const bool clamp = clampX != 0 && clampY != 0;
+        const bool point = ((fetch.dwords[3] >> 19) & 3) == 0;
+        pc.tinfo[slot][0] = (point ? (clamp ? 2u : 3u) : (clamp ? 1u : 0u));
+        pc.tinfo[slot][1] = it->second.width;
+        pc.tinfo[slot][2] = it->second.height;
+        pc.tinfo[slot][3] = 1;
+        pc.tbias[slot][0] = fetch.LodBias();
+        memcpy(&pc.tbias[slot][1], &index, 4);
+        pc.tbias[slot][2] = pc.tbias[slot][3] = 1.0f;
+        g.texBound++;
+        return;
+    }
     if (fetch.Type() != 2 || fetch.Dimension() == 3 || !TextureFormatSupported(fetch.Format()))
     {
         g.texFailed++;
@@ -512,6 +542,12 @@ bool Init()
     g.gphys = vk::CreateHostImportedBuffer(g.context, GuestPtr<uint8_t>(0xA0000000), 0x20000000);
     if (!g.gphys)
         Log("renderer_vk: guest memory is not importable; vertex data will read as zero");
+    if (!vk::ResolveInit(g.context, g.resolve))
+    {
+        Log("renderer_vk: resolve pass failed");
+        g.failed = true;
+        return false;
+    }
     if (!vk::DrawInit(g.context, g.draw, g.gphys, g.samplers, g.textures0.set, VK_NULL_HANDLE, 16u << 20, 64u << 20))
     {
         Log("renderer_vk: draw context failed");
@@ -580,15 +616,33 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     // later (BlitResolve / EnsureResolved); that is the next piece here.
     if ((gpureg::Get(0x2208 /* RB_MODECONTROL */) & 7) == 6)
     {
-        static uint32_t resolves = 0;
-        if (resolves < 6)
+        const uint32_t pitchReg = gpureg::Get(0x231A /* RB_COPY_DEST_PITCH */);
+        const uint32_t base = gpureg::Get(0x2319 /* RB_COPY_DEST_BASE */) & 0x1FFFFFFF;
+        const uint32_t info = gpureg::Get(0x231B /* RB_COPY_DEST_INFO */);
+        const uint32_t sourceSelect = (gpureg::Get(0x2318 /* RB_COPY_CONTROL */) >> 4) & 7;
+        const uint32_t width = std::clamp<uint32_t>(pitchReg & 0x3FFF, 1, 2048);
+        const uint32_t height = std::clamp<uint32_t>((pitchReg >> 16) & 0x3FFF, 1, 2048);
+        const bool swapRedBlue = (info >> 24) & 1;
+        static uint32_t logged = 0;
+        if (logged++ < 6)
+            Log("resolve_vk: base %08x %ux%u destFormat %u source %u swapRB %u", base, width, height, (info >> 7) & 0x3F,
+                sourceSelect, swapRedBlue);
+        if (sourceSelect != 0 || !g.openSurface)
+            return; // colour resolves only, and only from a surface that is open
+        vk::Surface& source = *g.openSurface;
+        // The copy samples the surface, so its pass has to end first; the next draw opens it
+        // again and SurfaceBegin brings it back to an attachment layout.
+        ClosePass();
+        State::ResolvedTexture& entry = g.resolved[base];
+        if (!entry.valid || entry.width != width || entry.height != height)
         {
-            resolves++;
-            Log("resolve_vk: base %08x pitch %u height %u destInfo %08x source %u (initiator %08x, %u vertices listed)",
-                gpureg::Get(0x2319 /* RB_COPY_DEST_BASE */) & 0x1FFFFFFF, gpureg::Get(0x231A /* RB_COPY_DEST_PITCH */) & 0x3FFF,
-                (gpureg::Get(0x231A) >> 16) & 0x3FFF, gpureg::Get(0x231B /* RB_COPY_DEST_INFO */),
-                (gpureg::Get(0x2318 /* RB_COPY_CONTROL */) >> 4) & 7, initiator, initiator >> 16);
+            const uint32_t index = vk::TextureReserve(g.context, g.textures0, width, height);
+            if (index == UINT32_MAX)
+                return;
+            entry = { index, width, height, true };
         }
+        vk::Image& target = g.textures0.slots[entry.index];
+        vk::ResolveImage(g.context, g.resolve, g.cmd, source.color.view, target.image, width, height, swapRedBlue);
         return;
     }
     // The draw path is behind its own switch while it is being brought up: with just

@@ -100,6 +100,29 @@ uint32_t TextureAdd(Context& context, TextureCache& cache, uint32_t width, uint3
     return index;
 }
 
+uint32_t TextureReserve(Context& context, TextureCache& cache, uint32_t width, uint32_t height)
+{
+    uint32_t index;
+    if (!cache.freeSlots.empty())
+    {
+        index = cache.freeSlots.back();
+        cache.freeSlots.pop_back();
+    }
+    else if (cache.next < cache.capacity)
+        index = cache.next++;
+    else
+        return UINT32_MAX;
+    if (cache.slots[index].image)
+        DestroyImage(context, cache.slots[index]);
+    cache.slots[index] = CreateImage(context, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    if (!cache.slots[index].image)
+        return UINT32_MAX;
+    WriteSlot(context, cache, index, cache.slots[index]);
+    // The descriptor points at a SHADER_READ image; the resolve moves it there when it is done.
+    return index;
+}
+
 void TextureFree(Context& context, TextureCache& cache, uint32_t index)
 {
     if (index >= cache.capacity || !cache.slots[index].image)
