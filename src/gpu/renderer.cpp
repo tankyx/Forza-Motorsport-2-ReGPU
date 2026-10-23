@@ -6206,6 +6206,7 @@ void DrawImpl(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     {
         float c[256][4];
         uint32_t b[8];
+        uint32_t l[32]; // loop constants
         uint32_t vf[96][4];
         uint32_t info[4];
         float point[4];
@@ -6220,6 +6221,7 @@ void DrawImpl(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     {
         float c[256][4];
         uint32_t b[8];
+        uint32_t l[32]; // loop constants
         uint32_t info[4];
         float info2[4];
         uint32_t tinfo[32][4];
@@ -6273,6 +6275,8 @@ void DrawImpl(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     }
     for (uint32_t i = 0; i < 8; i++)
         vc->b[i] = pc->b[i] = gpureg::Get(gpureg::BoolConstants + i);
+    for (uint32_t i = 0; i < 32; i++)
+        vc->l[i] = pc->l[i] = gpureg::Get(gpureg::LoopConstants + i);
     // Debug: FM2_FORCE_BOOL=<index>:<0|1> forces one boolean constant for every draw.
     if (static const char* force = getenv("FM2_FORCE_BOOL"); force)
     {

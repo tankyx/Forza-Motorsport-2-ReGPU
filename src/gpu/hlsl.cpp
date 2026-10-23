@@ -14,6 +14,7 @@ cbuffer VSConstants : register(b0)
 {
     float4 vc[256];
     uint4 vb[2];      // 256 bool constants
+    uint4 vl[8];      // 32 loop constants: count | start << 8 | step << 16
     uint4 vf[96];     // vertex fetch: x byte offset (gmem, or gphys if z), y endian
     uint4 vinfo;      // x index list byte offset, y position mode (0 clip, 1 screen) | 2 points, z/w target size
     float4 vpoint;    // xy constant point diameter (pixels), z/w min/max diameter
@@ -36,7 +37,8 @@ cbuffer PSConstants : register(b1)
 {
     float4 pc[256];
     uint4 pb[2];
-    uint4 pinfo;      // x alpha test function (7 = always), y generated-parameter register (0xFF none)
+    uint4 pl[8];
+    uint4 pinfo;     // x alpha test function (7 = always), y generated-parameter register (0xFF none)
     float4 pinfo2;    // x alpha reference, y/z 1 / render scale (pixel positions back to game pixels), w colour ceiling (0 none)
     uint4 tinfo[32];  // x sampler (0 lin wrap, 1 lin clamp, 2 point clamp, 3 point wrap), y/z size, w dimension (3 cube)
     float4 tbias[32]; // x fetch-constant LOD bias, y (as uint) bindless descriptor index
@@ -735,13 +737,13 @@ struct Emitter
             }
             case CfOp::LoopStart:
             {
-                // loop_start aL, i#: the loop's count/start/step are in the constant register
-                // i# (xenos::LoopConstant: count 8 bits, start 8 bits, step signed 8 bits).
+                // loop_start aL, i#: the loop's count/start/step are in loop constant i# (count 8 bits,
+                // start 8 bits, step signed 8 bits), the loop registers from 0x4908 (vl/pl), not a float
+                // constant.
                 const uint32_t skipTo = cf.lo & 0x1FFF;
                 const bool repeat = (cf.lo >> 13) & 1;
                 const uint32_t loopId = (cf.lo >> 16) & 0x1F;
-                result.constantsUsed = std::max(result.constantsUsed, loopId + 1);
-                const std::string params = std::string("asuint(") + (pixel ? "pc" : "vc") + "[" + std::to_string(loopId) + "].x)";
+                const std::string params = std::string(pixel ? "pl" : "vl") + "[" + std::to_string(loopId >> 2) + "][" + std::to_string(loopId & 3) + "]";
                 Line("if (loopDepth < 4)");
                 Line("{");
                 indent++;
@@ -805,7 +807,7 @@ struct Emitter
                 Line("if (" + cond + " && callDepth < 4)");
                 Line("{");
                 indent++;
-                Line("callRet[callDepth++] = " + next + "u;");
+                Line("callRet[callDepth++] = " + std::to_string(i + 1) + "u;"); // (next is 0xFFFFu after an end block)
                 Line("cfpc = " + std::to_string(target) + "u;");
                 Line("continue;");
                 indent--;
