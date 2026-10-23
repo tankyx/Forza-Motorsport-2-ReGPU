@@ -233,7 +233,7 @@ VkBuffer CreateBuffer(const Context& context, VkDeviceSize size, VkBufferUsageFl
 }
 
 Image CreateImage(const Context& context, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
-    VkImageViewType viewType, uint32_t layers)
+    VkImageViewType viewType, uint32_t layers, VkSampleCountFlagBits samples)
 {
     Image image;
     image.format = format;
@@ -245,7 +245,7 @@ Image CreateImage(const Context& context, uint32_t width, uint32_t height, VkFor
     ci.extent = { width, height, 1 };
     ci.mipLevels = 1;
     ci.arrayLayers = layers;
-    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.samples = samples;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = usage;
     ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

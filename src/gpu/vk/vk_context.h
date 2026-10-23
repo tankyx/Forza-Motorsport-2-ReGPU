@@ -4,6 +4,7 @@
 // renderer renders to images and the presenter reads them back (FM2_HEADLESS), so the whole
 // backend is testable without a platform layer.
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <vulkan/vulkan.h>
 
@@ -52,7 +53,8 @@ struct Image
 };
 // Device-local 2D image with a view covering one mip and layer.
 Image CreateImage(const Context& context, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
-    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, uint32_t layers = 1);
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, uint32_t layers = 1,
+    VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
 void DestroyImage(const Context& context, Image& image);
 
 // Uploads RGBA8 rows (tightly packed) into a SHADER_READ_ONLY image.
@@ -82,7 +84,11 @@ bool Submit(const Context& context, F&& record)
         VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
         si.commandBufferCount = 1;
         si.pCommandBuffers = &cb;
-        ok = vkQueueSubmit(context.queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(context.queue) == VK_SUCCESS;
+        const VkResult submitted = vkQueueSubmit(context.queue, 1, &si, VK_NULL_HANDLE);
+        const VkResult waited = submitted == VK_SUCCESS ? vkQueueWaitIdle(context.queue) : submitted;
+        if (submitted != VK_SUCCESS || waited != VK_SUCCESS)
+            fprintf(stderr, "vk: submit %d, wait %d\n", int(submitted), int(waited));
+        ok = submitted == VK_SUCCESS && waited == VK_SUCCESS;
     }
     vkFreeCommandBuffers(context.device, context.pool, 1, &cb);
     return ok;
