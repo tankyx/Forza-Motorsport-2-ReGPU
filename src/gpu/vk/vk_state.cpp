@@ -99,7 +99,10 @@ bool CreatePipeline(const Context& context, const StateKey& key, VkShaderModule 
     raster.polygonMode = VK_POLYGON_MODE_FILL;
     raster.cullMode = !cullable ? VK_CULL_MODE_NONE
         : (mode & 3) == 1 ? VK_CULL_MODE_FRONT_BIT : (mode & 3) == 2 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-    raster.frontFace = (mode & 4) ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // The viewport is flipped for the y-down clip space the translated shaders emit, which also
+    // reverses the winding the rasteriser sees: the guest's front face is the opposite one here,
+    // or every triangle of the world gets culled (the UI, never culled, stayed visible).
+    raster.frontFace = (mode & 4) ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
     raster.depthClampEnable = VK_FALSE;
     raster.rasterizerDiscardEnable = VK_FALSE;
     raster.depthBiasEnable = VK_FALSE;

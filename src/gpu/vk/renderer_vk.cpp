@@ -340,6 +340,9 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
     // A resolve the renderer kept instead of writing to memory: sample that.
     if (auto it = g.resolved.find(fetch.Address() & 0x1FFFFFFF); it != g.resolved.end() && it->second.valid)
     {
+        static uint32_t sampled = 0;
+        if (sampled++ < 8)
+            Log("texture_vk: fetch %08x samples a resolve (%ux%u)", fetch.Address(), it->second.width, it->second.height);
         const uint32_t index = it->second.index;
         const uint32_t clampX = (fetch.dwords[0] >> 10) & 7, clampY = (fetch.dwords[0] >> 13) & 7;
         const bool clamp = clampX != 0 && clampY != 0;
@@ -625,9 +628,9 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         const uint32_t height = std::clamp<uint32_t>((pitchReg >> 16) & 0x3FFF, 1, 2048);
         const bool swapRedBlue = (info >> 24) & 1;
         static uint32_t logged = 0;
-        if (logged++ < 6)
-            Log("resolve_vk: base %08x %ux%u destFormat %u source %u swapRB %u", base, width, height, (info >> 7) & 0x3F,
-                sourceSelect, swapRedBlue);
+        if (logged++ < 12)
+            Log("resolve_vk: base %08x %ux%u destFormat %u source %u swapRB %u, after %u draws this frame", base, width, height,
+                (info >> 7) & 0x3F, sourceSelect, swapRedBlue, g.drawsThisFrame);
         if (sourceSelect != 0 || !g.openSurface)
             return; // colour resolves only, and only from a surface that is open
         vk::Surface& source = *g.openSurface;
