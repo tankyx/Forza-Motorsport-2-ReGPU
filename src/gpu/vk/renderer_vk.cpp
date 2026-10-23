@@ -619,7 +619,14 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
 void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConstants& vc, gpu::PSConstants& pc)
 {
     const uint8_t* banks = gpureg::File() + gpureg::AluConstants * 4;
-    const uint32_t nv = std::min(vs->constantsUsed, 256u), np = std::min(ps->constantsUsed, 256u);
+    // The translated shaders read constants well past what their "constants used" count says: the
+    // sky shader's final colour is pc[254] + pc[255] and friends, while the count stops far below
+    // that — so those slots arrived zeroed and the sky came out magenta (green missing). Upload the
+    // whole bank; it is 4 KB per draw and correctness first. FM2_VK_PARTIAL_CONSTANTS restores the
+    // counted upload for A/B.
+    static const bool partial = getenv("FM2_VK_PARTIAL_CONSTANTS") != nullptr;
+    const uint32_t nv = partial ? std::min(vs->constantsUsed, 256u) : 256u;
+    const uint32_t np = partial ? std::min(ps->constantsUsed, 256u) : 256u;
     for (uint32_t i = 0; i < nv; i++)
         for (uint32_t c = 0; c < 4; c++)
         {

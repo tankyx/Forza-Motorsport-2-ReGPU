@@ -2,6 +2,8 @@
 #include "gpu/vk/vk_shaders.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 
 #include "log.h"
 
@@ -38,6 +40,15 @@ const VkShader* ShaderGet(Context& context, ShaderSet& set, uint64_t hash, const
         return &entry;
     }
     shader.hlsl = translated.hlsl;
+    // FM2_DUMP_HLSL, as on the D3D12 path: keep each translated shader for reading (the Vulkan
+    // backend translates in its own service, so the D3D12 side's dump never fired here).
+    if (getenv("FM2_DUMP_HLSL"))
+    {
+        std::filesystem::create_directories("out/hlsl");
+        char name[64];
+        snprintf(name, sizeof(name), "out/hlsl/%s_%016llx.hlsl", pixel ? "ps" : "vs", (unsigned long long)hash);
+        std::ofstream(name, std::ios::binary).write(shader.hlsl.data(), std::streamsize(shader.hlsl.size()));
+    }
     shader.constantsUsed = translated.constantsUsed;
     shader.usedTextureSlots = translated.usedTextureSlots;
     for (const auto& entry : translated.vertexFetchLayout)
