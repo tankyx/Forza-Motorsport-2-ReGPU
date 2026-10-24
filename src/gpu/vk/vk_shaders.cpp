@@ -64,6 +64,15 @@ const VkShader* ShaderGet(Context& context, ShaderSet& set, uint64_t hash, const
         }
         Log("shader_vk: %s %016llx fetches[%s ], layout %zu, constants %u", pixel ? "ps" : "vs", (unsigned long long)hash, list.c_str(),
             shader.vertexFetchLayout.size(), shader.constantsUsed);
+        // A fetch slot's layout is what the shader reads the vertex buffer with: x is (constant
+        // index | format << 8 | rounding flags), y stride, z offset, w swizzle. A zero stride or a
+        // constant index outside the fetch list is what a black vertex colour looks like.
+        for (size_t k = 0; k < shader.vertexFetchLayout.size() / 4 && k < 4; k++)
+        {
+            const uint32_t* w = &shader.vertexFetchLayout[k * 4];
+            Log("shader_vk:   vfl[%zu] = const %2u format %2u stride %3u offset %5u swizzle %03x", k, w[0] & 0x7Fu, (w[0] >> 8) & 0x3Fu,
+                w[1], w[2], w[3] & 0xFFF);
+        }
     }
 
     std::vector<uint32_t> spirv;
