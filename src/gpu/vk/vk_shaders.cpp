@@ -54,6 +54,17 @@ const VkShader* ShaderGet(Context& context, ShaderSet& set, uint64_t hash, const
     for (const auto& entry : translated.vertexFetchLayout)
         shader.vertexFetchLayout.insert(shader.vertexFetchLayout.end(), entry.begin(), entry.end());
     shader.vertexFetchConstants = translated.vertexFetchConstants;
+    {
+        std::string list;
+        for (uint32_t k : shader.vertexFetchConstants)
+        {
+            char t[8];
+            snprintf(t, sizeof(t), " %u", k);
+            list += t;
+        }
+        Log("shader_vk: %s %016llx fetches[%s ], layout %zu, constants %u", pixel ? "ps" : "vs", (unsigned long long)hash, list.c_str(),
+            shader.vertexFetchLayout.size(), shader.constantsUsed);
+    }
 
     std::vector<uint32_t> spirv;
     std::string error;

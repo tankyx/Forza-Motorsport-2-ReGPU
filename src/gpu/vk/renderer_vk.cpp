@@ -532,7 +532,8 @@ void BindTexture(gpu::PSConstants& pc, uint32_t slot)
     {
         static uint32_t sampled = 0;
         if (sampled++ < 8)
-            Log("texture_vk: fetch %08x samples a resolve (%ux%u)", fetch.Address(), it->second.width, it->second.height);
+            Log("texture_vk: fetch %08x samples a resolve index %u (%ux%u)", fetch.Address(), it->second.index, it->second.width,
+                it->second.height);
         const uint32_t index = it->second.index;
         const uint32_t clampX = (fetch.dwords[0] >> 10) & 7, clampY = (fetch.dwords[0] >> 13) & 7;
         const bool clamp = clampX != 0 && clampY != 0;
@@ -681,7 +682,7 @@ void BuildConstants(const vk::VkShader* vs, const vk::VkShader* ps, gpu::VSConst
     const size_t layout = std::min(vs->vertexFetchLayout.size(), sizeof(vc.vfl) / sizeof(vc.vfl[0])) * sizeof(vc.vfl[0]) / sizeof(uint32_t);
     if (layout)
         memcpy(vc.vfl, vs->vertexFetchLayout.data(), layout * sizeof(uint32_t));
-    vc.info[1] = (gpureg::Get(0x2000) & 0x3FFF) ? 0 : 0; // position mode: clip
+    vc.info[1] = 0; // position mode: filled from the initiator in OnDraw
     vc.vscale[0] = RegFloat(0x210F);
     vc.vscale[1] = RegFloat(0x2111);
     vc.vscale[2] = RegFloat(0x2113);
@@ -887,6 +888,11 @@ void RendererVkSetShader(uint32_t type, const uint32_t* microcodeBE, uint32_t us
 // ---- Draws ------------------------------------------------------------------------------
 void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
 {
+    // Init before anything else, resolves included: bindless slot 0 is the white null texture and
+    // TextureReserve hands out slots from the same counter, so a resolve that runs first takes
+    // slot 0, destroys the null texture, and every later unbound sample reads an EDRAM copy.
+    if (!Init())
+        return;
     // Resolve packets (RB_MODECONTROL 6) copy EDRAM into memory: they are not geometry and must
     // not be drawn as triangles. The D3D12 path turns them into a texture the title samples
     // later (BlitResolve / EnsureResolved); that is the next piece here.
@@ -901,8 +907,9 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         const bool swapRedBlue = (info >> 24) & 1;
         static uint32_t logged = 0;
         if (logged++ < 12)
-            Log("resolve_vk: base %08x %ux%u destFormat %u source %u swapRB %u, after %u draws this frame", base, width, height,
-                (info >> 7) & 0x3F, sourceSelect, swapRedBlue, g.drawsThisFrame);
+            Log("resolve_vk: base %08x %ux%u destFormat %u source %u swapRB %u, after %u draws this frame, index %u", base, width, height,
+                (info >> 7) & 0x3F, sourceSelect, swapRedBlue, g.drawsThisFrame,
+                g.resolved.count(base) ? g.resolved[base].index : 0u);
         if (sourceSelect != 0 || !g.openSurface)
             return; // colour resolves only, and only from a surface that is open
         vk::Surface& source = *g.openSurface;
@@ -925,8 +932,6 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     // FM2_RENDERER=vulkan the seam and the shader service run against the real game, and draws
     // are skipped rather than drawn wrongly.
     static const bool drawEnabled = getenv("FM2_VK_DRAWS") != nullptr;
-    if (!Init())
-        return;
     if (!g.vsHash || !g.psHash)
         return;
     const vk::VkShader* vs = vk::ShaderGet(g.context, g.shaders, g.vsHash, g.vsCode.data(), uint32_t(g.vsCode.size()), false);
@@ -996,6 +1001,10 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     static const uint32_t traceDrawsTex = getenv("FM2_VK_TRACE_TEX_DRAWS") ? uint32_t(atoi(getenv("FM2_VK_TRACE_TEX_DRAWS"))) : 0;
     static uint32_t tracedDrawsTex = 0;
     BuildConstants(vs, ps, vc, pc);
+    // Position mode, from the initiator: 2 means point sprites. hlsl.cpp reads it as
+    // "(vinfo.y & 2) != 0" to expand each point into a screen-space quad; with it always 0 every
+    // point sprite collapsed to a single degenerate vertex.
+    vc.info[1] = (initiator & 0x3F) == 1 ? 2 : 0;
     // FM2_VK_TRACE_PS=<hash>: only trace draws with that pixel shader, so the trace lands on the
     // draw being investigated whatever the frame timing does (the sky is a62c809452fcc71b).
     static const uint64_t tracePs = getenv("FM2_VK_TRACE_PS") ? strtoull(getenv("FM2_VK_TRACE_PS"), nullptr, 16) : 0;
@@ -1083,6 +1092,7 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
     // FM2_VK_ONLY_DRAW=<n> / FM2_VK_SKIP_DRAWS=<a>-<b>: draw a frame one draw at a time to see what
     // each contributes — the quickest way to find the draw that should be filling a region and is
     // not. Indices are this frame's draw order.
+    uint32_t drawIndex = 0;
     {
         static const uint32_t onlyDraw = getenv("FM2_VK_ONLY_DRAW") ? uint32_t(atoi(getenv("FM2_VK_ONLY_DRAW"))) : UINT32_MAX;
         static const bool skipParsed = [] { return true; }();
@@ -1096,8 +1106,8 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         }();
         // The ordinal is taken here and not at the end of the function, so a skipped draw still
         // advances it — otherwise the first draw would be the only one ever considered.
-        const uint32_t index = g.drawsThisFrame++;
-        const bool skip = onlyDraw != UINT32_MAX ? index != onlyDraw : (haveSkip && index >= skipFrom && index < skipTo);
+        drawIndex = uint32_t(g.drawsThisFrame++);
+        const bool skip = onlyDraw != UINT32_MAX ? drawIndex != onlyDraw : (haveSkip && drawIndex >= skipFrom && drawIndex < skipTo);
         g.skippedByFilter += skip ? 1 : 0;
         if (skip)
             return;
@@ -1115,9 +1125,19 @@ void RendererVkOnDraw(uint32_t initiator, uint32_t dmaBase, uint32_t dmaSize)
         {
             tracedDraws++;
             traced = true;
-            Log("trace_vk: frame %llu draw prim %u, %zu vertices, ps %016llx tex %u (%ux%u), target %u %u, scale %g %g offset %g %g",
-                (unsigned long long)g.frame, initiator & 0x3F, list.size(), g.psHash, pc.tbias[0][1] ? uint32_t(pc.tbias[0][1]) : 0u,
-                pc.tinfo[0][1], pc.tinfo[0][2], vc.info[2], vc.info[3], vc.vscale[0],
+            // Every bound slot, not just slot 0: a draw with no texture in slot 0 may still sample
+            // another, and "nothing bound anywhere" is a different bug from "slot 0 missing".
+            std::string bound;
+            for (uint32_t slot = 0; slot < 32; slot++)
+                if (pc.tinfo[slot][1] || pc.tinfo[slot][2])
+                {
+                    char t[40];
+                    snprintf(t, sizeof(t), " %u:%u(%ux%u)", slot, uint32_t(pc.tbias[slot][1]), pc.tinfo[slot][1], pc.tinfo[slot][2]);
+                    bound += t;
+                }
+            Log("trace_vk: frame %llu draw %u prim %u, %zu vertices, vs %016llx (layout %zu, fetches %zu) ps %016llx tex[%s ], target %u %u, scale %g %g offset %g %g",
+                (unsigned long long)g.frame, drawIndex, initiator & 0x3F, list.size(), g.vsHash, vs->vertexFetchLayout.size(),
+                vs->vertexFetchConstants.size(), g.psHash, bound.c_str(), vc.info[2], vc.info[3], vc.vscale[0],
                 vc.vscale[1], vc.voffset[0], vc.voffset[1]);
             if ((initiator & 0x3F) == 4)
                 for (int c = 0; c < 4; c++)
